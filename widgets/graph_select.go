@@ -14,6 +14,7 @@ type GraphNodeSelect struct {
 	Nodes map[string]bool
 }
 
+// Initialize a new node select
 func NewGraphNodeSelect() *GraphNodeSelect {
 	return &GraphNodeSelect{
 		Stat:  "",
@@ -21,6 +22,7 @@ func NewGraphNodeSelect() *GraphNodeSelect {
 	}
 }
 
+// Initialize or update node select for a stat
 func (graphNodeSelect *GraphNodeSelect) GraphSelectInit(nodesList []string,
 	nodesSelected []bool, stat string) {
 	if graphNodeSelect.Stat != stat {
@@ -30,4 +32,14 @@ func (graphNodeSelect *GraphNodeSelect) GraphSelectInit(nodesList []string,
 	for i, node := range nodesList {
 		graphNodeSelect.Nodes[node] = nodesSelected[i]
 	}
+}
+
+// Handler to add a node
+func (graphNodeSelect *GraphNodeSelect) AddNode(node string) {
+	graphNodeSelect.Nodes[node] = true
+}
+
+// Handler to remove a node
+func (graphNodeSelect *GraphNodeSelect) RemoveNode(node string) {
+	delete(graphNodeSelect.Nodes, node)
 }

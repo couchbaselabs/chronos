@@ -9,15 +9,13 @@
 package main
 
 import (
-	"log"
-
 	"github.com/couchbaselabs/chronos/widgets"
-
-	ui "github.com/gizak/termui/v3"
 )
 
-func updateGraph(table *widgets.StatsTable, stats map[string]map[string][]float64,
-	statNodes map[string][]string, lineChart *widgets.LineGraph, graphNum int) {
+// Handle selection of a stat for a particular graph stat. Copies stat buffers
+// for that particular stat and nodes to the widget
+func updateGraph(table *widgets.StatsTable, stats *stats, nodesList []string,
+	lineChart *widgets.LineGraph, graphNum int) {
 
 	var graphStat string
 
@@ -28,36 +26,68 @@ func updateGraph(table *widgets.StatsTable, stats map[string]map[string][]float6
 	}
 
 	lineChart.Title = graphStat
-	lineChart.Data = make([][]float64, len(statNodes[graphStat]))
+	lineChart.Data = make([][]float64, len(nodesList))
 
-	for i, node := range statNodes[graphStat] {
-		lineChart.Data[i] = stats[node][graphStat]
+	stats.bufferLock.RLock()
+	for i, node := range nodesList {
+		lineChart.Data[i] = stats.statBuffers[node][graphStat]
 	}
+	stats.bufferLock.RUnlock()
 }
 
-func updateUI(loggerRender *log.Logger, statNodes map[string][]string,
-	stats map[string]map[string][]float64, lineChart1 *widgets.LineGraph,
-	lineChart2 *widgets.LineGraph, nodeSelect1 *widgets.GraphNodeSelect,
-	nodeSelect2 *widgets.GraphNodeSelect) {
+// Handle changes in the list of nodes in a cluster
+func updateGraphNodes(nodesList []string, stats *stats,
+	lineChart1 *widgets.LineGraph, lineChart2 *widgets.LineGraph,
+	nodeSelect1 *widgets.GraphNodeSelect, nodeSelect2 *widgets.GraphNodeSelect) {
 
+	stats.bufferLock.RLock()
 	if lineChart1.Title != "" {
-		for i, node := range statNodes[lineChart1.Title] {
+		lineChart1.Data = make([][]float64, len(nodesList))
+		for i, node := range nodesList {
 			if nodeSelect1.Nodes[node] {
-				lineChart1.Data[i] = stats[node][lineChart1.Title]
+				lineChart1.Data[i] = stats.statBuffers[node][lineChart1.Title]
 			} else {
 				lineChart1.Data[i] = make([]float64, 0)
 			}
 		}
 	}
 	if lineChart2.Title != "" {
-		for i, node := range statNodes[lineChart2.Title] {
+		for i, node := range nodesList {
+			lineChart2.Data = make([][]float64, len(nodesList))
 			if nodeSelect2.Nodes[node] {
-				lineChart2.Data[i] = stats[node][lineChart2.Title]
+				lineChart2.Data[i] = stats.statBuffers[node][lineChart2.Title]
 			} else {
 				lineChart2.Data[i] = make([]float64, 0)
 			}
 		}
 	}
-	ui.Render(lineChart1)
-	ui.Render(lineChart2)
+	stats.bufferLock.RUnlock()
+}
+
+// Update graph if node has been toggled in nodesTable
+func updateUI(nodesList []string,
+	stats *stats, lineChart1 *widgets.LineGraph,
+	lineChart2 *widgets.LineGraph, nodeSelect1 *widgets.GraphNodeSelect,
+	nodeSelect2 *widgets.GraphNodeSelect) {
+
+	stats.bufferLock.RLock()
+	if lineChart1.Title != "" {
+		for i, node := range nodesList {
+			if nodeSelect1.Nodes[node] {
+				lineChart1.Data[i] = stats.statBuffers[node][lineChart1.Title]
+			} else {
+				lineChart1.Data[i] = make([]float64, 0)
+			}
+		}
+	}
+	if lineChart2.Title != "" {
+		for i, node := range nodesList {
+			if nodeSelect2.Nodes[node] {
+				lineChart2.Data[i] = stats.statBuffers[node][lineChart2.Title]
+			} else {
+				lineChart2.Data[i] = make([]float64, 0)
+			}
+		}
+	}
+	stats.bufferLock.RUnlock()
 }

@@ -16,17 +16,29 @@ import (
 	ui "github.com/gizak/termui/v3"
 )
 
+// Widget to display a set of lines as a graph
+// Each line displayed in a different color
 type LineGraph struct {
 	*ui.Block
 
-	Data            [][]float64
-	MaxVal          float64
-	LineColors      []ui.Color
-	AxesColor       ui.Color
-	HorizontalScale int
-	DotMarkerRune   rune
+	// Data slices holding the values to be displayed
+	Data [][]float64
+
+	// Maximum value in the entire data slice
+	// Used to vertically size the graph
+	maxVal float64
+
+	// Defines colors for each line
+	lineColors []ui.Color
+
+	// Defines colors for the axes
+	axesColor ui.Color
+
+	// Horizontal scaling of the graph
+	horizontalScale int
 }
 
+// Values of different paddings
 const (
 	xAxisLabelsHeight = 1
 	yAxisLabelsWidth  = 4
@@ -34,17 +46,18 @@ const (
 	yAxisLabelsGap    = 1
 )
 
+// Initializes a new line graph
 func NewLineGraph() *LineGraph {
 	return &LineGraph{
 		Block:           ui.NewBlock(),
-		LineColors:      ui.Theme.Plot.Lines,
-		AxesColor:       ui.Theme.Plot.Axes,
-		HorizontalScale: 1,
-		DotMarkerRune:   ui.DOT,
+		lineColors:      ui.Theme.Plot.Lines,
+		axesColor:       ui.Theme.Plot.Axes,
+		horizontalScale: 1,
 		Data:            [][]float64{},
 	}
 }
 
+// Function to render the lines
 func (graph *LineGraph) renderBraille(buf *ui.Buffer, drawArea image.Rectangle,
 	maxVal float64) {
 
@@ -52,6 +65,7 @@ func (graph *LineGraph) renderBraille(buf *ui.Buffer, drawArea image.Rectangle,
 	canvas.Rectangle = drawArea
 
 	for i, line := range graph.Data {
+		// Check to prevent rendering of empty lines
 		if len(line) > 1 {
 			previousHeight :=
 				int((line[1] / maxVal) * float64(drawArea.Dy()-1))
@@ -59,14 +73,14 @@ func (graph *LineGraph) renderBraille(buf *ui.Buffer, drawArea image.Rectangle,
 				height := int((val / maxVal) * float64(drawArea.Dy()-1))
 				canvas.SetLine(
 					image.Pt(
-						(drawArea.Min.X+(j*graph.HorizontalScale))*2,
+						(drawArea.Min.X+(j*graph.horizontalScale))*2,
 						(drawArea.Max.Y-previousHeight-1)*4,
 					),
 					image.Pt(
-						(drawArea.Min.X+((j+1)*graph.HorizontalScale))*2,
+						(drawArea.Min.X+((j+1)*graph.horizontalScale))*2,
 						(drawArea.Max.Y-height-1)*4,
 					),
-					ui.SelectColor(graph.LineColors, i),
+					ui.SelectColor(graph.lineColors, i),
 				)
 				previousHeight = height
 			}
@@ -76,8 +90,10 @@ func (graph *LineGraph) renderBraille(buf *ui.Buffer, drawArea image.Rectangle,
 	canvas.Draw(buf)
 }
 
+// Render axes of the graph
 func (graph *LineGraph) plotAxes(buf *ui.Buffer, maxVal float64) {
-	// draw origin cell
+
+	// Render origin
 	buf.SetCell(
 		ui.NewCell(ui.BOTTOM_LEFT, ui.NewStyle(ui.ColorWhite)),
 		image.Pt(
@@ -85,83 +101,83 @@ func (graph *LineGraph) plotAxes(buf *ui.Buffer, maxVal float64) {
 			graph.Inner.Max.Y-xAxisLabelsHeight-1,
 		),
 	)
-	// draw x axis line
+	// Render x axis
 	for i := yAxisLabelsWidth + 1; i < graph.Inner.Dx(); i++ {
 		buf.SetCell(
 			ui.NewCell(ui.HORIZONTAL_DASH, ui.NewStyle(ui.ColorWhite)),
 			image.Pt(
-				i+graph.Inner.Min.X,
-				graph.Inner.Max.Y-xAxisLabelsHeight-1,
+				i+graph.Inner.Min.X, graph.Inner.Max.Y-xAxisLabelsHeight-1,
 			),
 		)
 	}
-	// draw y axis line
+	// Render y axis
 	for i := 0; i < graph.Inner.Dy()-xAxisLabelsHeight-1; i++ {
 		buf.SetCell(
 			ui.NewCell(ui.VERTICAL_DASH, ui.NewStyle(ui.ColorWhite)),
 			image.Pt(graph.Inner.Min.X+yAxisLabelsWidth, i+graph.Inner.Min.Y),
 		)
 	}
-	// draw x axis labels
-	// draw 0
+
+	// Render 0
 	buf.SetString(
 		"0",
 		ui.NewStyle(ui.ColorWhite),
 		image.Pt(graph.Inner.Min.X+yAxisLabelsWidth, graph.Inner.Max.Y-1),
 	)
-	// draw rest
+	// Render other x axis labels
 	for x := graph.Inner.Min.X + yAxisLabelsWidth +
-		(xAxisLabelsGap)*graph.HorizontalScale + 1; x < graph.Inner.Max.X-1; {
+		(xAxisLabelsGap)*graph.horizontalScale + 1; x < graph.Inner.Max.X-1; {
 
 		label := fmt.Sprintf(
 			"%d",
 			(x-(graph.Inner.Min.X+yAxisLabelsWidth)-1)/
-				(graph.HorizontalScale)+1,
+				(graph.horizontalScale)+1,
 		)
 		buf.SetString(
-			label,
-			ui.NewStyle(ui.ColorWhite),
-			image.Pt(x, graph.Inner.Max.Y-1),
+			label, ui.NewStyle(ui.ColorWhite), image.Pt(x, graph.Inner.Max.Y-1),
 		)
-		x += (len(label) + xAxisLabelsGap) * graph.HorizontalScale
+		x += (len(label) + xAxisLabelsGap) * graph.horizontalScale
 	}
-	// draw y axis labels
+
+	// Render y axis labels
 	verticalScale := maxVal / float64(graph.Inner.Dy()-xAxisLabelsHeight-1)
 	for i := 0; i*(yAxisLabelsGap+1) < graph.Inner.Dy()-1; i++ {
 		buf.SetString(
 			strconv.FormatFloat(
-				float64(i)*verticalScale*(yAxisLabelsGap+1),
-				'E',
-				2,
-				64,
+				float64(i)*verticalScale*(yAxisLabelsGap+1), 'E', 2, 64,
 			),
 			ui.NewStyle(ui.ColorWhite),
 			image.Pt(
-				graph.Inner.Min.X,
-				graph.Inner.Max.Y-(i*(yAxisLabelsGap+1))-2,
+				graph.Inner.Min.X, graph.Inner.Max.Y-(i*(yAxisLabelsGap+1))-2,
 			),
 		)
 	}
 }
 
+// Render widget
 func (graph *LineGraph) Draw(buf *ui.Buffer) {
 	graph.Block.Draw(buf)
 
-	maxVal := graph.MaxVal
+	// Identify max value within the data that can be displayed
+	maxVal := graph.maxVal
 	maxData, _ := ui.GetMaxFloat64From2dSlice(graph.Data)
 
+	// Set new max value if out of bounds
 	if maxVal > 2*maxData || maxVal < maxData {
 		maxVal = maxData * 1.25
-		graph.MaxVal = maxVal
+		graph.maxVal = maxVal
 	}
 
+	// Render axes
 	graph.plotAxes(buf, maxVal)
 
+	// Identify leftover space
 	drawArea := image.Rect(
 		graph.Inner.Min.X+yAxisLabelsWidth+1, graph.Inner.Min.Y,
 		graph.Inner.Max.X, graph.Inner.Max.Y-xAxisLabelsHeight-1,
 	)
 
+	// Render lines
 	graph.renderBraille(buf, drawArea, maxVal)
 
 }

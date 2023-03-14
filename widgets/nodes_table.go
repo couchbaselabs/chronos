@@ -14,100 +14,126 @@ import (
 	ui "github.com/gizak/termui/v3"
 )
 
+// Defining colors for each line dased on its index
 var colors = ui.Theme.Plot.Lines
 
+// Widget to display Nodes
+// Each row displayed on a separate line
+// Allows toggling of any row and a cursor to be present anywhere
 type NodesTable struct {
 	*ui.Block
-	Header      string
-	Rows        []string
-	SelectedRow int
-	TopRow      int
-	Nodes       []bool
-	Selected    bool
+
+	// Heading for the widget
+	header string
+
+	// Rows to be displayed
+	Rows []string
+
+	// Cursor position
+	selectedRow int
+
+	// Row currently displayed on the first line
+	topRow int
+
+	// Toggle information for each node
+	Nodes []bool
+
+	// Toggle indicating if widget is currently selected by the user
+	selected bool
 }
 
-func NewNodesTable() *NodesTable {
+// Initializes a new Nodes table
+func NewNodesTable(NodesList []string) *NodesTable {
+
+	rows := make([]string, 0)
+	rows = append(rows, NodesList...)
+	nodes := make([]bool, 0)
+
+	for i := 0; i < len(NodesList); i++ {
+		nodes = append(nodes, true)
+	}
+
 	return &NodesTable{
 		Block:       ui.NewBlock(),
-		Header:      "List of Nodes",
-		SelectedRow: 0,
-		TopRow:      0,
-		Selected:    false,
+		header:      "List of Nodes",
+		selectedRow: 0,
+		topRow:      0,
+		selected:    false,
+		Rows:        rows,
+		Nodes:       nodes,
 	}
 }
 
+// Render widget
 func (table *NodesTable) Draw(buf *ui.Buffer) {
 	table.Block.Draw(buf)
 
+	// Horizontal padding of header from the left edge
 	paddingHeader := 10
+
+	// Vertical padding of rows from the header
 	paddingRow := 4
+
+	// Display style of the header
 	styleHeader := ui.NewStyle(ui.ColorWhite, ui.ColorClear, ui.ModifierBold)
 
+	// Render header
 	buf.SetString(
-		table.Header,
-		styleHeader,
+		table.header, styleHeader,
 		image.Pt(table.Inner.Min.X+paddingHeader, table.Inner.Min.Y+1),
 	)
 
-	for rowNum := table.TopRow; rowNum < table.TopRow+table.Inner.Dy()-3 &&
+	// Loop to render as many rows as possible within the bounds of the widget
+	for rowNum := table.topRow; rowNum < table.topRow+table.Inner.Dy()-3 &&
 		rowNum < len(table.Rows); rowNum++ {
 
 		row := table.Rows[rowNum]
-		y := rowNum + 3 - table.TopRow
+		y := rowNum + 3 - table.topRow
 
+		// Check if current node is selected
 		if table.Nodes[rowNum] {
-			if rowNum == table.SelectedRow && table.Selected {
+			// Check if cursor on current node
+			if rowNum == table.selectedRow && table.selected {
 				buf.SetString(
 					row,
 					ui.NewStyle(
-						colors[rowNum],
-						ui.ColorWhite,
-						ui.ModifierClear,
+						colors[rowNum], ui.ColorWhite, ui.ModifierClear,
 					),
 					image.Pt(
-						table.Inner.Min.X+paddingRow,
-						table.Inner.Min.Y+y,
+						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
 					),
 				)
 			} else {
 				buf.SetString(
 					row,
 					ui.NewStyle(
-						ui.ColorWhite,
-						colors[rowNum],
-						ui.ModifierClear,
+						ui.ColorWhite, colors[rowNum], ui.ModifierClear,
 					),
 					image.Pt(
-						table.Inner.Min.X+paddingRow,
-						table.Inner.Min.Y+y,
+						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
 					),
 				)
 			}
 		} else {
-			if rowNum == table.SelectedRow && table.Selected {
+			// Check if cursor on the current node
+			if rowNum == table.selectedRow && table.selected {
 				buf.SetString(
 					row,
 					ui.NewStyle(
-						colors[rowNum],
-						ui.ColorBlack,
-						ui.ModifierClear,
+						colors[rowNum], ui.ColorBlack, ui.ModifierClear,
 					),
 					image.Pt(
-						table.Inner.Min.X+paddingRow,
-						table.Inner.Min.Y+y,
+						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
 					),
 				)
 			} else {
 				buf.SetString(
 					row,
 					ui.NewStyle(
-						colors[rowNum],
-						ui.ColorClear,
-						ui.ModifierClear,
+						colors[rowNum], ui.ColorClear, ui.ModifierClear,
 					),
 					image.Pt(
-						table.Inner.Min.X+paddingRow,
-						table.Inner.Min.Y+y,
+						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
 					),
 				)
 			}
@@ -115,52 +141,76 @@ func (table *NodesTable) Draw(buf *ui.Buffer) {
 	}
 }
 
+// Handler function to scroll up
 func (table *NodesTable) ScrollUp() {
 
-	table.SelectedRow--
+	table.selectedRow--
 
-	if table.SelectedRow < 0 {
-		table.SelectedRow = 0
+	if table.selectedRow < 0 {
+		table.selectedRow = 0
 	}
 
-	if table.SelectedRow < table.TopRow {
-		table.TopRow = table.SelectedRow
+	if table.selectedRow < table.topRow {
+		table.topRow = table.selectedRow
 	}
 }
 
+// Handler function to scroll down
 func (table *NodesTable) ScrollDown() {
 
-	table.SelectedRow++
+	table.selectedRow++
 
-	if table.SelectedRow > len(table.Rows)-1 {
-		table.SelectedRow = len(table.Rows) - 1
+	if table.selectedRow > len(table.Rows)-1 {
+		table.selectedRow = len(table.Rows) - 1
 	}
 
-	if table.SelectedRow > table.TopRow+table.Inner.Dy()-4 {
-		table.TopRow = table.SelectedRow - (table.Inner.Dy() - 4)
+	if table.selectedRow > table.topRow+table.Inner.Dy()-4 {
+		table.topRow = table.selectedRow - (table.Inner.Dy() - 4)
 	}
 }
 
+// Handler function to indicate if cursor is on widget
 func (table *NodesTable) ToggleTableSelect() {
-	table.Selected = !table.Selected
+	table.selected = !table.selected
 }
 
-func (table *NodesTable) SelectStat(stat string, statNodes map[string][]string,
+// Handler function to initialize toggle info
+func (table *NodesTable) SelectStat(stat string,
 	nodes map[string]bool, nodeSelectStat string) {
 
-	table.Rows = make([]string, 0)
-	table.Nodes = make([]bool, 0)
-
-	for _, node := range statNodes[stat] {
-		table.Rows = append(table.Rows, node)
+	for i, row := range table.Rows {
 		if stat == nodeSelectStat {
-			table.Nodes = append(table.Nodes, nodes[node])
+			table.Nodes[i] = nodes[row]
 		} else {
-			table.Nodes = append(table.Nodes, true)
+			table.Nodes[i] = true
 		}
 	}
 }
 
+// Handler function to toggle select for a row
 func (table *NodesTable) SelectNode() {
-	table.Nodes[table.SelectedRow] = !table.Nodes[table.SelectedRow]
+	table.Nodes[table.selectedRow] = !table.Nodes[table.selectedRow]
+}
+
+// Handler function to add a new node
+func (table *NodesTable) AddNode(node string) {
+	table.Nodes = append(table.Nodes, true)
+	table.Rows = append(table.Rows, node)
+}
+
+// Handler function to remove an existing node
+func (table *NodesTable) RemoveNode(node string) {
+
+	tempRows := make([]string, 0)
+	tempNodes := make([]bool, 0)
+
+	for i, nodeName := range table.Rows {
+		if nodeName != node {
+			tempRows = append(tempRows, nodeName)
+			tempNodes = append(tempNodes, table.Nodes[i])
+		}
+	}
+
+	table.Nodes = tempNodes
+	table.Rows = tempRows
 }

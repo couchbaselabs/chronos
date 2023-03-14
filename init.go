@@ -9,111 +9,285 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
-	"io/ioutil"
-	"log"
+	"fmt"
+	"math"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/couchbaselabs/chronos/widgets"
 
+	log "github.com/couchbase/clog"
+	"github.com/couchbase/gocb/v2"
 	ui "github.com/gizak/termui/v3"
 )
 
-type Config struct {
-	Username string              `json:"username,omitempty"`
-	Password string              `json:"password,omitempty"`
-	Nodes    map[string][]string `json:"nodes,omitempty"`
+// Holds all the input from the user given as command line arguments
+type config struct {
+	username   *string
+	password   *string
+	ip         *string
+	reportPath *string
+	stats      map[string]*configStatInfo
+	alerts     map[string]*int
 }
 
-type StatInfo struct {
-	MinVal    float64
-	MaxVal    float64
-	MaxChange float64
+// Holds all alert related thresholds for a particular stat
+type configStatInfo struct {
+	MinVal        *float64
+	MaxVal        *float64
+	MaxChange     *float64
+	MaxChangeTime *int
 }
 
-func flagsInit() string {
+// Holds all incoming stat data from the server
+type stats struct {
 
-	configPath := flag.String(
-		"config",
-		"config.json",
-		"Provide the relative path to the config file",
+	// The main map holding the stat data (map[node][stat][300][float64])
+	statBuffers map[string]map[string][]float64
+
+	// List of stats to monitor
+	statsList []string
+
+	// Arrival time of messages from each node (map[node][300][time.Time])
+	arrivalTimes map[string][]time.Time
+
+	statInfo map[string]*configStatInfo
+
+	// Lock for statBuffers
+	bufferLock sync.RWMutex
+
+	// Lock for arrivalTimes
+	timeLock sync.RWMutex
+}
+
+// Define and parse flags
+func flagsInit() *config {
+
+	config := &config{}
+
+	config.username = flag.String(
+		"username", "Administrator", "Provide the username for the cluster",
 	)
+	config.password = flag.String(
+		"password", "123456", "Provide the password for the cluster",
+	)
+	config.ip = flag.String(
+		"connection_string", "127.0.0.1:12000",
+		"Provide the ip address for one of the search nodes",
+	)
+	config.reportPath = flag.String(
+		"report", "./", "Provide path to print reports",
+	)
+	config.stats = make(map[string]*configStatInfo)
+	config.alerts = make(map[string]*int)
+
+	statsList := []string{
+		"batch_bytes_added",
+		"batch_bytes_removed",
+		"curr_batches_blocked_by_herder",
+		"num_batches_introduced",
+		"num_bytes_used_ram",
+		"num_gocbcore_dcp_agents",
+		"num_gocbcore_stats_agents",
+		"pct_cpu_gc",
+		"tot_batches_merged",
+		"tot_batches_new",
+		"tot_bleve_dest_closed",
+		"tot_bleve_dest_opened",
+		"tot_queryreject_on_memquota",
+		"tot_rollback_full",
+		"tot_rollback_partial",
+		"total_gc",
+		"total_queries_rejected_by_herder",
+		"utilization:billableUnitsRate",
+		"utilization:cpuPercent",
+		"utilization:diskBytes",
+		"utilization:memoryBytes",
+	}
+
+	for _, stat := range statsList {
+
+		configStatInfo := &configStatInfo{}
+
+		configStatInfo.MinVal = flag.Float64(
+			stat+"_min_val", math.NaN(),
+			"Provide the minimum threshold value for "+stat,
+		)
+		configStatInfo.MaxVal = flag.Float64(
+			stat+"_max_val", math.NaN(),
+			"Provide the maximum threshold value for "+stat,
+		)
+		configStatInfo.MaxChange = flag.Float64(
+			stat+"_max_change", math.NaN(),
+			"Provide the maximum change permitted for "+stat,
+		)
+		configStatInfo.MaxChangeTime = flag.Int(
+			stat+"_max_change_time", 1,
+			"Provide the amount of time for the max change "+stat,
+		)
+
+		config.stats[stat] = configStatInfo
+	}
+
+	config.alerts["ttl"] = flag.Int(
+		"alert_TTL", 120, "Provide number of seconds an alert should live",
+	)
+	config.alerts["dataPadding"] = flag.Int(
+		"alert_data_padding", 20,
+		"Provide number of seconds of data before and after an alert",
+	)
+
 	flag.Parse()
 
-	return *configPath
+	// Check to verify alert parameters are within bounds
+	checkAlertParams(config.alerts)
+	return config
 }
 
-func logsInit() (*log.Logger, *log.Logger, error) {
+// Validating given alert time to live (TTL) and data padding
+// and setting default or max values if out of bounds
+func checkAlertParams(alerts map[string]*int) {
+	defaultTTL := 120
+	defaultDataPadding := 20
+	maxTTL := 600
+	maxDataPadding := 60
 
-	logRender, err := os.OpenFile(
-		"Render.log",
+	if val, ok := alerts["ttl"]; !ok {
+		alerts["ttl"] = &defaultTTL
+	} else if *val <= 0 {
+		alerts["ttl"] = &defaultTTL
+	} else if *val > maxTTL {
+		alerts["ttl"] = &maxTTL
+	}
+
+	if val, ok := alerts["dataPadding"]; !ok {
+		alerts["dataPadding"] = &defaultDataPadding
+	} else if *val <= 0 {
+		alerts["dataPadding"] = &defaultDataPadding
+	} else if *val > maxDataPadding {
+		alerts["dataPadding"] = &maxDataPadding
+	}
+}
+
+// Initializing the logger
+func logsInit() error {
+
+	logFile, err := os.OpenFile(
+		"chronos.log",
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
 		0644,
 	)
+
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 
-	loggerRender := log.New(logRender, "Render Log", log.LstdFlags)
+	log.SetOutput(logFile)
+	log.SetLoggerCallback(loggerFunc)
 
-	logUpdate, err := os.OpenFile(
-		"Update.log",
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
-		0644,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	loggerUpdate := log.New(logUpdate, "Update Log", log.LstdFlags)
-
-	return loggerRender, loggerUpdate, nil
+	return nil
 }
 
-func configInit(configPath string, logger *log.Logger) (Config, error) {
+// Setting log format
+func loggerFunc(level, format string, args ...interface{}) string {
 
-	configRaw, err := ioutil.ReadFile(configPath)
-	if err != nil {
-		return Config{}, err
+	ts := time.Now().Format("2006-01-02T15:04:05.000-07:00")
+	prefix := ts + " [" + level + "] "
+	if format != "" {
+		return prefix + fmt.Sprintf(format, args...)
 	}
-
-	config := Config{}
-
-	err = json.Unmarshal([]byte(configRaw), &config)
-	if err != nil {
-		return config, err
-	}
-
-	return config, nil
+	return prefix + fmt.Sprint(args...)
 }
 
-func uiInit() error {
+// Starting a connection to the server
+func clusterInit(connectionString string, username string,
+	password string) (*gocb.Cluster, error) {
 
-	return ui.Init()
+	cluster, err := gocb.Connect(
+		"couchbase://"+connectionString, gocb.ClusterOptions{
+			Authenticator: gocb.PasswordAuthenticator{
+				Username: username,
+				Password: password,
+			},
+		})
 
+	if err != nil {
+		return cluster, err
+	}
+
+	return cluster, nil
 }
 
-func statNodeInit(config Config) map[string][]string {
+// Getting a list of existing search nodes from the cluster
+func nodesListInit(cluster *gocb.Cluster) ([]string, error) {
 
-	statNodes := make(map[string][]string)
+	pings, err := cluster.Ping(&gocb.PingOptions{
+		ServiceTypes: []gocb.ServiceType{gocb.ServiceTypeSearch},
+	})
+	if err != nil {
+		return nil, err
+	}
 
-	for nodeName, statList := range config.Nodes {
-		for _, stat := range statList {
+	nodesList := make([]string, 0)
 
-			if _, ok := statNodes[stat]; !ok {
-				statNodes[stat] = make([]string, 0)
+	for service, pingReports := range pings.Services {
+		if service == gocb.ServiceTypeSearch {
+			for _, pingReport := range pingReports {
+				if pingReport.State == gocb.PingStateOk {
+					nodesList = append(nodesList, pingReport.Remote)
+				}
 			}
-
-			statNodes[stat] = append(statNodes[stat], nodeName)
 		}
 	}
 
-	return statNodes
+	return nodesList, nil
 }
 
+// Getting the list of stats from the config
+func statsListInit(stats map[string]*configStatInfo) []string {
+
+	statsList := make([]string, 0)
+
+	for stat := range stats {
+		statsList = append(statsList, stat)
+	}
+
+	return statsList
+}
+
+// Initialize the stats struct with empty slices
+func statsInit(config *config, nodesList []string, statsList []string) *stats {
+
+	statBuffers := make(map[string]map[string][]float64)
+	arrivalTimes := make(map[string][]time.Time)
+
+	for _, node := range nodesList {
+
+		statBuffers[node] = make(map[string][]float64)
+		arrivalTimes[node] = make([]time.Time, 110)
+
+		for _, stat := range statsList {
+			statBuffers[node][stat] = make([]float64, 110)
+		}
+	}
+
+	return &stats{
+		statBuffers:  statBuffers,
+		statsList:    statsList,
+		statInfo:     config.stats,
+		arrivalTimes: arrivalTimes,
+		bufferLock:   sync.RWMutex{},
+		timeLock:     sync.RWMutex{},
+	}
+}
+
+// Setting up the widgets in a grid with relative ratios and positions
 func gridInit(nodesTable *widgets.NodesTable, statsTable *widgets.StatsTable,
-	lineChart1 *widgets.LineGraph, lineChart2 *widgets.LineGraph) *ui.Grid {
+	lineChart1 *widgets.LineGraph, lineChart2 *widgets.LineGraph,
+	eventDisplay *widgets.EventDisplay,
+	rebalancePopup *widgets.RebalancePopup) *ui.Grid {
 
 	lineChart1.Title = ""
 	lineChart2.Title = ""
@@ -130,10 +304,12 @@ func gridInit(nodesTable *widgets.NodesTable, statsTable *widgets.StatsTable,
 		ui.NewRow(2.0/5,
 			ui.NewCol(1.0/4, statsTable),
 			ui.NewCol(1.0/4, nodesTable),
+			ui.NewCol(1.0/2, eventDisplay),
 		),
 	)
 
 	termWidth, termHeight := ui.TerminalDimensions()
 	grid.SetRect(0, 0, termWidth, termHeight)
+	rebalancePopup.Resize(termWidth, termHeight)
 	return grid
 }
