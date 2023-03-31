@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/chronos/widgets"
+	"github.com/couchbaselabs/chronos/widgets"
 
 	ui "github.com/gizak/termui/v3"
 )
