@@ -10,8 +10,15 @@ package widgets
 
 import (
 	"image"
+	"sort"
 
 	ui "github.com/gizak/termui/v3"
+)
+
+// Colors corresponding to selected stats
+const (
+	stat1Color ui.Color = 46  // Green1
+	stat2Color ui.Color = 165 // Magenta2
 )
 
 // Widget to display a list of stats
@@ -26,6 +33,9 @@ type StatsTable struct {
 	// Rows to be displayed
 	Rows []string
 
+	// Array to track the number of lines used to display each row
+	RowSize []int
+
 	// Cursor position
 	SelectedRow int
 
@@ -36,7 +46,7 @@ type StatsTable struct {
 	Stat2 int
 
 	// Row currently displayed on the first line
-	topRow int
+	TopRow int
 
 	// Toggle indicating if widget is currently selected by the user
 	selected bool
@@ -46,22 +56,30 @@ type StatsTable struct {
 func NewStatsTable(statsList []string) *StatsTable {
 
 	rows := make([]string, 0)
+	sort.Strings(statsList)
 	rows = append(rows, statsList...)
 
 	return &StatsTable{
 		Block:       ui.NewBlock(),
 		Header:      "List of Stats",
 		SelectedRow: 0,
-		topRow:      0,
+		TopRow:      0,
 		Stat1:       -1,
 		Stat2:       -1,
 		selected:    true,
 		Rows:        rows,
+		RowSize:     make([]int, 0),
 	}
 }
 
 // Render widget
 func (table *StatsTable) Draw(buf *ui.Buffer) {
+
+	if table.selected {
+		table.BorderStyle = ui.NewStyle(ui.ColorWhite)
+	} else {
+		table.BorderStyle = ui.NewStyle(8)
+	}
 	table.Block.Draw(buf)
 
 	// Horizontal padding of header from the left edge
@@ -72,17 +90,17 @@ func (table *StatsTable) Draw(buf *ui.Buffer) {
 
 	// Display style of the header
 	styleHeader := ui.NewStyle(
-		ui.Theme.Default.Fg, ui.ColorClear, ui.ModifierBold,
+		table.BorderStyle.Fg, ui.ColorClear, ui.ModifierBold,
 	)
 
 	// Display style of a normal row
 	rowStyle := ui.NewStyle(
-		ui.Theme.Default.Fg, ui.ColorClear, ui.ModifierClear,
+		table.BorderStyle.Fg, ui.ColorClear, ui.ModifierClear,
 	)
 
 	// Display style of a row with the cursor
 	rowStyleSelected := ui.NewStyle(
-		ui.ColorBlack, ui.ColorWhite, ui.ModifierClear,
+		ui.ColorBlack, table.BorderStyle.Fg, ui.ModifierClear,
 	)
 
 	// Render header
@@ -91,88 +109,103 @@ func (table *StatsTable) Draw(buf *ui.Buffer) {
 		image.Pt(table.Inner.Min.X+paddingHeader, table.Inner.Min.Y+1),
 	)
 
+	table.RowSize = make([]int, len(table.Rows))
+
+	// Keep track of when space is not available to render the row
+	continueRender := true
+
 	// Loop to render as many rows as possible within the bounds of the widget
-	for rowNum := table.topRow; rowNum < table.topRow+table.Inner.Dy()-3 &&
-		rowNum < len(table.Rows); rowNum++ {
+	for rowNum, usedSpace := 0, 3; rowNum < len(table.Rows); rowNum++ {
 
 		row := table.Rows[rowNum]
-		y := rowNum + 3 - table.topRow
 
-		// Check if the current row is selected row 1
+		var rowCells []ui.Cell
+
+		// Check if the row is stat 1
 		if rowNum == table.Stat1 {
-			// Check if cursor on selected row 1
+			// Check if cursor is on row
 			if rowNum == table.SelectedRow && table.selected {
-				buf.SetString(
+				rowCells = ui.ParseStyles(
 					row,
 					ui.NewStyle(
-						ui.ColorCyan, ui.ColorWhite, ui.ModifierClear,
-					),
-					image.Pt(
-						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
+						stat1Color, ui.ColorWhite, ui.ModifierClear,
 					),
 				)
 			} else {
-				buf.SetString(
+				rowCells = ui.ParseStyles(
 					row,
 					ui.NewStyle(
-						ui.Theme.Default.Fg, ui.ColorCyan, ui.ModifierClear,
-					),
-					image.Pt(
-						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
+						ui.ColorBlack, stat1Color, ui.ModifierClear,
 					),
 				)
 			}
-			// Check if current row is selected row 2
+			// Check if the row is stat 2
 		} else if rowNum == table.Stat2 {
-			// Check if cursor on selected row 2
+			// Check if cursor is on row
 			if rowNum == table.SelectedRow && table.selected {
-				buf.SetString(
+				rowCells = ui.ParseStyles(
 					row,
 					ui.NewStyle(
-						ui.ColorMagenta, ui.ColorWhite, ui.ModifierClear,
-					),
-					image.Pt(
-						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
+						stat2Color, ui.ColorWhite, ui.ModifierClear,
 					),
 				)
 			} else {
-				buf.SetString(
+				rowCells = ui.ParseStyles(
 					row,
 					ui.NewStyle(
-						ui.Theme.Default.Fg, ui.ColorMagenta, ui.ModifierClear,
-					),
-					image.Pt(
-						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
+						ui.ColorBlack, stat2Color, ui.ModifierClear,
 					),
 				)
 			}
-			// Check if cursor on row
+			// Check if cursor is on row
 		} else if rowNum == table.SelectedRow && table.selected {
-			buf.SetString(
-				row, rowStyleSelected,
-				image.Pt(table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y),
-			)
+			rowCells = ui.ParseStyles(row, rowStyleSelected)
 		} else {
-			buf.SetString(
-				row, rowStyle,
-				image.Pt(table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y),
-			)
+			rowCells = ui.ParseStyles(row, rowStyle)
+		}
+
+		// Add padding for the rows
+		rowCells = WrapCells(rowCells, uint(table.Inner.Dx()-2*paddingRow))
+
+		// Split cells into multiple lines
+		rowCellRows := ui.SplitCells(rowCells, '\n')
+
+		// Render each cell if all the lines of text fit within the widget
+		if len(rowCellRows) < table.Inner.Dy()-usedSpace &&
+			rowNum >= table.TopRow && continueRender {
+			for i, row := range rowCellRows {
+				for _, cx := range ui.BuildCellWithXArray(row) {
+					x, cell := cx.X, cx.Cell
+					buf.SetCell(cell, image.Pt(
+						table.Inner.Min.X+paddingRow+x,
+						table.Inner.Min.Y+usedSpace+i,
+					))
+				}
+			}
+
+			// Update the size of the text
+			table.RowSize[rowNum] = len(rowCellRows)
+
+			// Track the current line number
+			usedSpace = usedSpace + table.RowSize[rowNum]
+		} else {
+			// Update number of rows taken to render even if not rendering
+			table.RowSize[rowNum] = len(rowCellRows)
+
+			if rowNum >= table.TopRow {
+				// Stop rendering from this row
+				continueRender = false
+			}
 		}
 	}
 }
 
-// Handler function for scroll uo
+// Handler function for scroll up
 func (table *StatsTable) ScrollUp() {
 
 	table.SelectedRow--
 
-	if table.SelectedRow < 0 {
-		table.SelectedRow = 0
-	}
-
-	if table.SelectedRow < table.topRow {
-		table.topRow = table.SelectedRow
-	}
+	table.CalcPos()
 }
 
 // Handler function for scroll down
@@ -180,13 +213,7 @@ func (table *StatsTable) ScrollDown() {
 
 	table.SelectedRow++
 
-	if table.SelectedRow > len(table.Rows)-1 {
-		table.SelectedRow = len(table.Rows) - 1
-	}
-
-	if table.SelectedRow > table.topRow+table.Inner.Dy()-4 {
-		table.topRow = table.SelectedRow - (table.Inner.Dy() - 4)
-	}
+	table.CalcPos()
 }
 
 // Handler function to indicate if cursor is on widget
@@ -196,9 +223,87 @@ func (table *StatsTable) ToggleTableSelect() {
 
 // Handler function to enable selection of a row
 func (table *StatsTable) SelectGraph(graphNum int) {
-	if graphNum == 1 && table.Stat2 != table.SelectedRow {
-		table.Stat1 = table.SelectedRow
-	} else if graphNum == 2 && table.Stat1 != table.SelectedRow {
-		table.Stat2 = table.SelectedRow
+
+	if table.Stat2 != table.SelectedRow && table.Stat1 != table.SelectedRow {
+		if graphNum == 1 {
+			table.Stat1 = table.SelectedRow
+		} else {
+			table.Stat2 = table.SelectedRow
+		}
+	}
+}
+
+// Handler function for mouse click
+func (table *StatsTable) HandleClick(x int, y int) {
+	x = x - table.Min.X
+	y = y - table.Min.Y
+	if (x > 0 && x <= table.Inner.Dx()) && (y > 0 && y <= table.Inner.Dy()) {
+		table.SelectedRow = (table.TopRow + y) - 4
+		table.CalcPos()
+	}
+}
+
+// Handler function to ensure cursor is never out of bounds
+func (table *StatsTable) CalcPos() {
+
+	if table.SelectedRow < 0 {
+		table.SelectedRow = 0
+	}
+
+	if table.SelectedRow < table.TopRow {
+		table.TopRow = table.SelectedRow
+	}
+
+	if table.SelectedRow > len(table.Rows)-1 {
+		table.SelectedRow = len(table.Rows) - 1
+	}
+	if table.SelectedRow > table.TopRow+(table.Inner.Dy()-4) {
+		table.TopRow = table.SelectedRow - (table.Inner.Dy() - 4)
+	}
+
+	if table.SelectedRow >= table.TopRow+table.RowsOnDisplay() {
+		space := table.Inner.Dy() - 4
+
+		for i := table.SelectedRow; i >= 0; i-- {
+			space = space - table.RowSize[i]
+			if space < 0 {
+				if i == table.SelectedRow {
+					table.TopRow = i
+				} else {
+					table.TopRow = i + 1
+				}
+				break
+			}
+		}
+	}
+}
+
+// Calculate number of alerts currently on display
+func (table *StatsTable) RowsOnDisplay() int {
+
+	space := table.Inner.Dy() - 4
+	rows := 0
+
+	for i := table.TopRow; i < len(table.RowSize); i++ {
+
+		space = space - table.RowSize[i]
+
+		if space > 0 {
+			rows = rows + 1
+		} else {
+			break
+		}
+	}
+
+	return rows
+}
+
+// Handler function to determins if pixel is within the widget
+func (table *StatsTable) Contains(x int, y int) bool {
+	if x > table.Min.X && x <= table.Max.X &&
+		y > table.Min.Y && y <= table.Max.Y {
+		return true
+	} else {
+		return false
 	}
 }

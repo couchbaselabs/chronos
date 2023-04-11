@@ -17,7 +17,7 @@ import (
 	"github.com/couchbaselabs/chronos/widgets"
 )
 
-// Constant used to avoid warning in fmt.Sprintf()
+// Percent defined to avoid warning in fmt.Sprintf()
 const (
 	percent = "%"
 )
@@ -52,7 +52,7 @@ func analyzeStat(stats *stats, node string, stat string,
 			node, stat, "Below Threshold", curVal, *stats.statInfo[stat].MinVal,
 		)
 
-		event.Description = makeDescription(event, false)
+		event.Description = makeDescription(event)
 
 		triggerEvent(event, eventChannel, stats)
 
@@ -65,7 +65,7 @@ func analyzeStat(stats *stats, node string, stat string,
 		event := widgets.NewEvent(
 			node, stat, "Above Threshold", curVal, *stats.statInfo[stat].MaxVal,
 		)
-		event.Description = makeDescription(event, false)
+		event.Description = makeDescription(event)
 
 		triggerEvent(event, eventChannel, stats)
 
@@ -83,7 +83,7 @@ func analyzeStat(stats *stats, node string, stat string,
 			)
 			event.ThresholdChange = math.Abs(curVal-lastTimeVal) / lastTimeVal
 			event.ThresholdTime = *stats.statInfo[stat].MaxChangeTime
-			event.Description = makeDescription(event, false)
+			event.Description = makeDescription(event)
 
 			triggerEvent(event, eventChannel, stats)
 
@@ -119,6 +119,8 @@ func eventCreateHandler(eventChannel chan *widgets.Event,
 	for {
 		event := <-eventChannel
 		created := false
+
+		// Check if alert already exists
 		eventDisplay.EventLock.Lock()
 		for _, prevEvent := range eventDisplay.Events {
 
@@ -130,7 +132,9 @@ func eventCreateHandler(eventChannel chan *widgets.Event,
 			if event.Node == prevEvent.Node &&
 				event.Stat == prevEvent.Stat &&
 				event.EventType == prevEvent.EventType &&
-				event.LastTriggered.Before(eventTTL) {
+				event.LastTriggered.Before(eventTTL) &&
+				!prevEvent.Deprecated &&
+				len(prevEvent.Data) < 300 {
 				updateEvent(prevEvent)
 				created = true
 				break
@@ -143,6 +147,7 @@ func eventCreateHandler(eventChannel chan *widgets.Event,
 
 			event = createEvent(event, stats, alerts)
 
+			// Nil if node gets deleted
 			if event != nil {
 				eventDisplay.AddEvent(event)
 			}
@@ -155,7 +160,7 @@ func updateEvent(event *widgets.Event) {
 	event.AlertTimes = append(event.AlertTimes, time.Now())
 	event.LastTriggered = time.Now()
 	event.NumTimes++
-	event.Description = makeDescription(event, true)
+	event.Description = makeDescription(event)
 }
 
 // Create a new alert and append required data and data arrival times
@@ -227,13 +232,14 @@ func updateEventData(eventDisplay *widgets.EventDisplay,
 
 	// Variable to indicate no alerts have expired
 	clean := true
+
 	eventDisplay.EventLock.Lock()
 	for _, event := range eventDisplay.Events {
 
 		// Check if alert needs to be updated
 		// No updating alerts if node no longer in cluster
 		// or if alert already at full data capacity
-		if !event.DataFilled {
+		if !event.DataFilled && len(event.Data) < 300 {
 
 			alertEndTime := event.LastTriggered.Add(
 				time.Duration(*alerts["dataPadding"]) * time.Second,
@@ -243,63 +249,80 @@ func updateEventData(eventDisplay *widgets.EventDisplay,
 
 			// Check if node still exists
 			if _, ok := stats.arrivalTimes[event.Node]; ok {
-				i := len(stats.arrivalTimes[event.Node]) - 1
 
-				// Find number of data points to update
-				for event.DataTimes[len(event.DataTimes)-1] !=
-					stats.arrivalTimes[event.Node][i] {
-					i--
+				var i int
+
+				lastUpdated := event.DataTimes[len(event.DataTimes)-1]
+
+				for i = len(stats.arrivalTimes[event.Node]) - 1; i >= 0; i-- {
+					if lastUpdated == stats.arrivalTimes[event.Node][i] {
+						break
+					}
+					if stats.arrivalTimes[event.Node][i].IsZero() {
+						i = -1
+						break
+					}
 				}
 
-				i++
-				for i < len(stats.arrivalTimes[event.Node]) {
-
-					stats.bufferLock.RLock()
-
-					// Check if node still exists
-					// Update data
-					if _, ok := stats.statBuffers[event.Node]; ok {
-						event.Data = append(
-							event.Data,
-							stats.statBuffers[event.Node][event.Stat][i],
-						)
-						stats.bufferLock.RUnlock()
-					} else {
-						stats.bufferLock.RUnlock()
-						break
-					}
-
-					// Update data arrival times
-					event.DataTimes = append(
-						event.DataTimes, stats.arrivalTimes[event.Node][i],
-					)
-
-					// Check for alert fullness
-					if widgets.CompareTimes(
-						alertEndTime, stats.arrivalTimes[event.Node][i],
-					) {
-						event.DataFilled = true
-						break
-					}
-
+				if i >= 0 {
 					i++
+					for i < len(stats.arrivalTimes[event.Node]) {
+
+						stats.bufferLock.RLock()
+
+						if _, ok := stats.statBuffers[event.Node]; ok {
+							event.Data = append(
+								event.Data,
+								stats.statBuffers[event.Node][event.Stat][i],
+							)
+							stats.bufferLock.RUnlock()
+						} else {
+							event.Deprecated = true
+							event.Description = makeDescription(event)
+							stats.bufferLock.RUnlock()
+							break
+						}
+
+						// Update data arrival times
+						event.DataTimes = append(
+							event.DataTimes, stats.arrivalTimes[event.Node][i],
+						)
+
+						// Check for alert fullness
+						if widgets.CompareTimes(
+							alertEndTime, stats.arrivalTimes[event.Node][i],
+						) {
+							event.DataFilled = true
+							break
+						}
+
+						i++
+					}
 				}
+			} else {
+				// Indicate that alert no longer needs updating
+				event.Deprecated = true
+				event.Description = makeDescription(event)
 			}
 
 			stats.timeLock.RUnlock()
 
+			// Check for alert fullness
 			if widgets.CompareTimes(
 				alertEndTime, event.DataTimes[len(event.DataTimes)-1],
 			) {
 				event.DataFilled = true
 			}
+			// Remove event if triggered too frequently
+		} else if len(event.Data) >= 300 {
+			event.Stale = true
 		}
 
 		eventTTL := event.LastTriggered.Add(
 			time.Duration(*alerts["ttl"]) * time.Second,
 		)
 
-		// Check if alert timed out
+		// Check for alert TTL
 		if time.Now().After(eventTTL) {
 			event.Stale = true
 			clean = false
@@ -308,6 +331,7 @@ func updateEventData(eventDisplay *widgets.EventDisplay,
 
 	eventDisplay.EventLock.Unlock()
 
+	// Remove expired alerts from the event display
 	if !clean {
 
 		// Remove stale alerts
@@ -343,109 +367,56 @@ func cleanEvents(eventDisplay *widgets.EventDisplay) []*widgets.Event {
 	return deletedEvents
 }
 
-// Makes the description to be displayed in the UI for an event
-func makeDescription(event *widgets.Event, update bool) string {
+// Create a description of alerts to be displayed on the widget
+func makeDescription(event *widgets.Event) string {
 
-	switch update {
-	case true:
-		switch event.EventType {
-		case "Below Threshold", "Above Threshold":
-			return fmt.Sprintf(
-				"%s:- %s:%s Event - %s, Value - %f, Threshold Value - %f"+
-					", Last occured at %s, Occured %d times",
-				event.FirstTriggered.Format("2006-01-02 15:04:05"), event.Node,
-				event.Stat, event.EventType, event.ThresholdData, event.Threshold,
-				event.LastTriggered.Format("2006-01-02 15:04:05"), event.NumTimes,
-			)
-		case "Sudden Change":
-			return fmt.Sprintf(
-				"%s:- %s:%s Event - %s, Value - %f, Threshold Value - %f"+
-					", Last occured at %s with a change of %f over %d seconds,"+
-					" Occured %d times",
-				event.FirstTriggered.Format("2006-01-02 15:04:05"), event.Node,
-				event.Stat, event.EventType, event.ThresholdData, event.Threshold,
-				event.LastTriggered.Format("2006-01-02 15:04:05"),
-				event.ThresholdChange, event.ThresholdTime, event.NumTimes,
-			)
-		}
-	case false:
-		switch event.EventType {
-		case "Below Threshold", "Above Threshold":
-			return fmt.Sprintf(
-				"%s:- %s:%s Event - %s, Value - %f, Threshold Value - %f",
-				event.FirstTriggered.Format("2006-01-02 15:04:05"), event.Node,
-				event.Stat, event.EventType, event.ThresholdData, event.Threshold,
-			)
-		case "Sudden Change":
-			return fmt.Sprintf(
-				"%s:- %s:%s Event - %s, Value - %f, Threshold Value - %f"+
-					", Occured over %d seconds with a change of %f",
-				event.FirstTriggered.Format("2006-01-02 15:04:05"), event.Node,
-				event.Stat, event.EventType, event.ThresholdData, event.Threshold,
-				event.ThresholdTime, event.ThresholdChange,
-			)
-		}
-	}
-	return ""
-}
-
-// Makes the description for an event to be used while logging
-var reportDelete = func(event *widgets.Event) {
+	var description string
 
 	switch event.EventType {
+	case "Below Threshold", "Above Threshold":
+		description = fmt.Sprintf(
+			"%s:- %s:%s Event - %s, Value - %f, Threshold Value - %f",
+			event.FirstTriggered.Format("2006-01-02 15:04:05"),
+			event.Node,
+			event.Stat,
+			event.EventType,
+			event.ThresholdData,
+			event.Threshold,
+		)
 	case "Sudden Change":
-		if event.NumTimes == 1 {
-			log.Printf(
-				"Node - %s, Stat - %s. Stat changed by more "+
-					"than the threshold limit of %f%s at %s. This"+
-					"change occured over %d second(s)",
-				event.Node, event.Stat, event.Threshold*100,
-				percent, event.LastTriggered.Format("2006-01-02 15:04:05"),
-				event.ThresholdTime,
-			)
-		} else {
-			log.Printf(
-				"Node - %s, Stat - %s. Stat changed by more than"+
-					" the threshold limit of %f%s at %s. This change"+
-					" occured over %d second(s). Similar changes occured"+
-					" %d times with the last one occuring at %s",
-				event.Node, event.Stat, event.Threshold*100,
-				percent, event.FirstTriggered.Format("2006-01-02 15:04:05"),
-				event.ThresholdTime, event.NumTimes,
-				event.LastTriggered.Format("2006-01-02 15:04:05"),
-			)
-		}
-	case "Below Threshold":
-		if event.NumTimes == 1 {
-			log.Printf("Node - %s, Stat - %s. Stat exceeded "+
-				"threshold limit of %f at %s",
-				event.Node, event.Stat, event.Threshold,
-				event.LastTriggered.Format("2006-01-02 15:04:05"),
-			)
-		} else {
-			log.Printf("Node - %s, Stat - %s. Stat exceeded "+
-				"threshold limit of %f at %s. Similarly, the stat exceeded"+
-				" threshold limit %d times with the last one occuring at %s",
-				event.Node, event.Stat, event.Threshold,
-				event.FirstTriggered.Format("2006-01-02 15:04:05"),
-				event.NumTimes, event.LastTriggered.Format("2006-01-02 15:04:05"),
-			)
-		}
-	case "Above Threshold":
-		if event.NumTimes == 1 {
-			log.Printf("Node - %s, Stat - %s. Stat dropped below threshold"+
-				" limit of %f at %s",
-				event.Node, event.Stat, event.Threshold,
-				event.LastTriggered.Format("2006-01-02 15:04:05"),
-			)
-		} else {
-			log.Printf("Node - %s, Stat - %s. Stat dropped below threshold"+
-				" limit of %f at %s. Similarly, the stat was below the threshold"+
-				" limit %d times with the last one occuring at %s",
-				event.Node, event.Stat, event.Threshold,
-				event.FirstTriggered.Format("2006-01-02 15:04:05"),
-				event.NumTimes, event.LastTriggered.Format("2006-01-02 15:04:05"),
-			)
-		}
+		description = fmt.Sprintf(
+			"%s:- %s:%s Event - %s, Value - %f, Threshold Value - %f"+
+				", Changed %f%s over %d seconds",
+			event.FirstTriggered.Format("2006-01-02 15:04:05"),
+			event.Node,
+			event.Stat,
+			event.EventType,
+			event.ThresholdData,
+			event.Threshold,
+			event.ThresholdChange,
+			percent,
+			event.ThresholdTime,
+		)
 	}
+
+	if event.NumTimes > 1 {
+		description = description + fmt.Sprintf(
+			", Occured %d times, Last occured at %s",
+			event.NumTimes,
+			event.LastTriggered.Format("2006-01-02 15:04:05"),
+		)
+	}
+
+	if event.Deprecated {
+		description = description + ", Node left the cluster"
+	}
+
+	return description
+}
+
+// Logging description of deleted alerts
+// Variable to incorporate testing
+var reportDelete = func(event *widgets.Event) {
+
+	log.Printf(event.Description)
 }

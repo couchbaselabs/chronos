@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/couchbase/clog"
 	ui "github.com/gizak/termui/v3"
 )
 
@@ -47,15 +48,15 @@ type EventDisplay struct {
 	header string
 
 	// Cursor position
-	selectedRow int
+	SelectedRow int
 
 	// Row currently displayed on the first line
-	topRow int
+	TopRow int
 
 	// Toggle indicating if widget is currently selected by the user
 	selected bool
 
-	// Arrat to track the number of lines used to display each alert
+	// Array to track the number of lines used to display each alert
 	rowSize []int
 
 	// Lock for the list of alerts
@@ -65,7 +66,7 @@ type EventDisplay struct {
 // Struct to hold all the information for one alert
 type Event struct {
 
-	// Holds data within the data padding defined by the user
+	// Holds data within data padding defined by user
 	Data []float64
 
 	// Holds timestamps for each data point
@@ -74,10 +75,10 @@ type Event struct {
 	// Holds timestamps everytime the alert was triggered
 	AlertTimes []time.Time
 
-	// Name of the stat the alert corresponds to
+	// Name of the node the alert corresponds to
 	Node string
 
-	// Name of the alert triggered
+	// Name of the stat the alert corresponds to
 	Stat string
 
 	// Type of the alert triggered
@@ -104,7 +105,7 @@ type Event struct {
 	// The time the alert last triggered
 	LastTriggered time.Time
 
-	// The time from which the alert has beed collecting data
+	// The time from which the alert has been collecting data
 	DataStart time.Time
 
 	// Toggle to indicate alert has expired
@@ -115,6 +116,9 @@ type Event struct {
 
 	// Toggle to indicate alert data is full
 	DataFilled bool
+
+	// Toggle to indicate alert node is no longer in cluster
+	Deprecated bool
 }
 
 // Initializes a new event display
@@ -123,8 +127,8 @@ func NewEventDisplay() *EventDisplay {
 		Block:       ui.NewBlock(),
 		Events:      make([]*Event, 0),
 		header:      "Alerts",
-		selectedRow: 0,
-		topRow:      0,
+		SelectedRow: 0,
+		TopRow:      0,
 		selected:    false,
 		rowSize:     make([]int, 0),
 		EventLock:   sync.RWMutex{},
@@ -147,6 +151,7 @@ func NewEvent(node string, stat string, eventType string,
 		LastTriggered:  time.Now(),
 		Stale:          false,
 		NumTimes:       1,
+		Deprecated:     false,
 	}
 }
 
@@ -180,11 +185,12 @@ func CopyEvent(event *Event) *Event {
 		Stale:           event.Stale,
 		NumTimes:        event.NumTimes,
 		DataFilled:      event.DataFilled,
+		Deprecated:      event.Deprecated,
 	}
 }
 
 // Handler to generate a report for an event
-func MakeReport(event *Event, path string) error {
+func MakeReport(event *Event, path string) {
 
 	filePath := fmt.Sprintf(
 		path+"Alert Report - %s.txt",
@@ -192,19 +198,18 @@ func MakeReport(event *Event, path string) error {
 	)
 	file, err := os.Create(filePath)
 	if err != nil {
-		return err
+		log.Printf("event_display: Failed to create file: %v", err)
+		return
 	}
 
 	fileInfo := ReportText(event)
 
 	_, err2 := file.WriteString(fileInfo)
 	if err2 != nil {
-		return err2
+		log.Printf("event_display: Error writing to file: %v", err)
+		return
 	}
 	file.Close()
-
-	return nil
-
 }
 
 // Handler to make the report text as a string
@@ -270,6 +275,10 @@ func ReportText(event *Event) string {
 				event.LastTriggered.Format("2006-01-02 15:04:05"),
 			)
 		}
+	}
+
+	if event.Deprecated {
+		fileInfo = fileInfo + "Node corresponding to alert was removed from the cluster.\n\n"
 	}
 
 	fileInfo = fileInfo + fmt.Sprintf(
@@ -349,17 +358,23 @@ func CompareTimes(t1 time.Time, t2 time.Time) bool {
 
 // Render widget
 func (display *EventDisplay) Draw(buf *ui.Buffer) {
+
+	if display.selected {
+		display.BorderStyle = ui.NewStyle(ui.ColorWhite)
+	} else {
+		display.BorderStyle = ui.NewStyle(8)
+	}
 	display.Block.Draw(buf)
 
 	// Horizontal padding of header from the left edge
 	paddingHeader := 10
 
-	// Display style of the header
+	// Vertical padding of rows from the header
 	paddingRow := 4
 
 	// Display style of the header
 	styleHeader := ui.NewStyle(
-		ui.Theme.Default.Fg, ui.ColorClear, ui.ModifierBold,
+		display.BorderStyle.Fg, ui.ColorClear, ui.ModifierBold,
 	)
 
 	// Render header
@@ -371,6 +386,9 @@ func (display *EventDisplay) Draw(buf *ui.Buffer) {
 	display.EventLock.RLock()
 	display.rowSize = make([]int, len(display.Events))
 
+	// Keep track of when space is not available to render the row
+	continueRender := true
+
 	// Loop to render as many rows as possible within the bounds of the widget
 	for rowNum, usedSpace := 0, 3; rowNum < len(display.Events); rowNum++ {
 
@@ -379,7 +397,7 @@ func (display *EventDisplay) Draw(buf *ui.Buffer) {
 		var eventCells []ui.Cell
 
 		// Check if current row is selected
-		if rowNum == display.selectedRow && display.selected {
+		if rowNum == display.SelectedRow && display.selected {
 			// Parse row text into cells
 			eventCells = ui.ParseStyles(
 				event.Description,
@@ -407,7 +425,7 @@ func (display *EventDisplay) Draw(buf *ui.Buffer) {
 
 		// Render each cell if all the lines of text fit within the widget
 		if len(eventCellRows) < display.Inner.Dy()-usedSpace &&
-			rowNum >= display.topRow {
+			rowNum >= display.TopRow && continueRender {
 			for i, row := range eventCellRows {
 				for _, cx := range ui.BuildCellWithXArray(row) {
 					x, cell := cx.X, cx.Cell
@@ -424,8 +442,13 @@ func (display *EventDisplay) Draw(buf *ui.Buffer) {
 			// Track the current line number
 			usedSpace = usedSpace + display.rowSize[rowNum]
 		} else {
-			// Update the size of text even if not rendered
+			// Update number of rows taken to render even if not rendering
 			display.rowSize[rowNum] = len(eventCellRows)
+
+			if rowNum >= display.TopRow {
+				// Stop rendering from this row
+				continueRender = false
+			}
 		}
 	}
 	display.EventLock.RUnlock()
@@ -434,38 +457,46 @@ func (display *EventDisplay) Draw(buf *ui.Buffer) {
 // Handler function for scroll up
 func (display *EventDisplay) ScrollUp() {
 
-	display.selectedRow--
+	display.SelectedRow--
 
-	if display.selectedRow < 0 {
-		display.selectedRow = 0
-	}
-
-	if display.selectedRow < display.topRow {
-		display.topRow = display.selectedRow
-	}
+	display.CalcPos()
 }
 
 // Handler function for scroll down
 func (display *EventDisplay) ScrollDown() {
 
-	display.selectedRow++
+	display.SelectedRow++
+
+	display.CalcPos()
+}
+
+// Handler function to ensure cursor is never out of bounds
+func (display *EventDisplay) CalcPos() {
+
+	if display.SelectedRow < 0 {
+		display.SelectedRow = 0
+	}
+
+	if display.SelectedRow < display.TopRow {
+		display.TopRow = display.SelectedRow
+	}
 
 	display.EventLock.RLock()
-	if display.selectedRow > len(display.Events)-1 {
-		display.selectedRow = len(display.Events) - 1
+	if display.SelectedRow > len(display.Events)-1 {
+		display.SelectedRow = len(display.Events) - 1
 	}
 	display.EventLock.RUnlock()
 
-	if display.selectedRow >= display.topRow+display.RowsOnDisplay() {
-		space := display.Inner.Dy() - 3
+	if display.SelectedRow >= display.TopRow+display.RowsOnDisplay() {
+		space := display.Inner.Dy() - 4
 
-		for i := display.selectedRow; i >= 0; i-- {
+		for i := display.SelectedRow; i >= 0; i-- {
 			space = space - display.rowSize[i]
 			if space < 0 {
-				if i == display.selectedRow {
-					display.topRow = i
+				if i == display.SelectedRow {
+					display.TopRow = i
 				} else {
-					display.topRow = i + 1
+					display.TopRow = i + 1
 				}
 				break
 			}
@@ -473,18 +504,13 @@ func (display *EventDisplay) ScrollDown() {
 	}
 }
 
-// Handler to indicate cursor is on widget
-func (display *EventDisplay) ToggleTableSelect() {
-	display.selected = !display.selected
-}
-
 // Calculate number of alerts currently on display
 func (display *EventDisplay) RowsOnDisplay() int {
 
-	space := display.Inner.Dy() - 3
+	space := display.Inner.Dy() - 4
 	rows := 0
 
-	for i := display.topRow; i < len(display.Events); i++ {
+	for i := display.TopRow; i < len(display.rowSize); i++ {
 
 		space = space - display.rowSize[i]
 
@@ -507,23 +533,22 @@ func (display *EventDisplay) AddEvent(event *Event) {
 
 // Handler to reset cursor
 func (display *EventDisplay) ResetSelect() {
-	display.selectedRow = 0
-	display.topRow = 0
+	display.SelectedRow = 0
+	display.TopRow = 0
 }
 
 // Handler to report an event
 func (display *EventDisplay) ReportEvent(path string) {
 
 	display.EventLock.RLock()
-
 	var event *Event
 
 	// Check if event exists
 	// Can go out of bounds immediately after an event expires
-	if display.selectedRow >= 0 &&
-		display.selectedRow < len(display.Events)-1 {
-		// Copy event ot reduce latency of report generation
-		event = CopyEvent(display.Events[display.selectedRow])
+	if display.SelectedRow >= 0 &&
+		display.SelectedRow <= len(display.Events)-1 {
+		// Copy event to reduce latency of report generation
+		event = CopyEvent(display.Events[display.SelectedRow])
 	}
 
 	display.EventLock.RUnlock()
@@ -531,5 +556,39 @@ func (display *EventDisplay) ReportEvent(path string) {
 	if event != nil {
 		// Generate report in a separate routine
 		go MakeReport(event, path)
+	}
+}
+
+// Handler function to indicate if cursor is on widget
+func (table *EventDisplay) ToggleTableSelect() {
+	table.selected = !table.selected
+}
+
+// Handler function for mouse click
+func (display *EventDisplay) HandleClick(x int, y int) {
+	x = x - display.Min.X
+	y = y - display.Min.Y
+	if (x > 0 && x <= display.Inner.Dx()) &&
+		(y > 0 && y <= display.Inner.Dy()) {
+		row := (display.TopRow + y) - 4
+
+		for i, size := range display.rowSize {
+			if row-size < 0 {
+				display.SelectedRow = i
+				break
+			} else {
+				row = row - size
+			}
+		}
+		display.CalcPos()
+	}
+}
+
+func (table *EventDisplay) Contains(x int, y int) bool {
+	if x > table.Min.X && x <= table.Max.X &&
+		y > table.Min.Y && y <= table.Max.Y {
+		return true
+	} else {
+		return false
 	}
 }

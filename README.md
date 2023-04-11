@@ -5,6 +5,7 @@
 The chronos tool is designed to get live stats from a couchbase server and display them in a terminal user interface.
 
 It takes the node ip information and the stats that needs to be polled along with authentication information and other settings as flags
+It takes the node ip information and the stats that needs to be polled along with authentication information and other settings as flags
 
 ## Getting Started
 - Clone the repo and start the tool using go run .
@@ -26,15 +27,18 @@ It takes the node ip information and the stats that needs to be polled along wit
     - Down arrow key and up arrow key to navigate within the table
     - 'a' key to select a stat for the left graph
     - 'd' key to select a stat for the right graph
-    - 's' to select or unselect a node for the stat
-    - 'p' key to print a report for an event
+    - 'Enter' to toggle selection of a node or to print a report
     - 'q' key to quit the program
 
 ## Log Information
 
 The tool will store logs for any anamoly or event that happens while the program is running. This includes
-- Being unable to connect to a node for a stat or node definitions.
-- Invalid server response or incorrect status codes.
+- Couchbase go sdk unable to connect to the cluster.
+- Unable to get a list of search nodes from the cluster.
+- No search nodes on the cluster.
+- Invalid or incorrect flags.
+- Invalid or incorrect chronos init options from the server.
+- Invalid server response or incorrect status codes from the server.
 - Being unable to parse the server response body.
 - Being unable to initialize the UI.
 - Server closing connection unexpectedly.

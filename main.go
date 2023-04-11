@@ -22,8 +22,8 @@ var (
 	nodesTable   *widgets.NodesTable
 	statsTable   *widgets.StatsTable
 	eventDisplay *widgets.EventDisplay
-	nodeSelect1  *widgets.GraphNodeSelect
-	nodeSelect2  *widgets.GraphNodeSelect
+	lineChart1   *widgets.LineGraph
+	lineChart2   *widgets.LineGraph
 )
 
 // This variable is used to track which table is currently selected
@@ -65,7 +65,6 @@ func main() {
 		log.Fatalf(
 			"main: unable to get node configuration from the server: %v", err,
 		)
-		return
 	}
 
 	// If the cluster has no search nodes
@@ -111,12 +110,10 @@ func main() {
 	// Initializing all widgets
 	statsTable = widgets.NewStatsTable(statsList)
 	nodesTable = widgets.NewNodesTable(nodesList)
-	lineChart1 := widgets.NewLineGraph()
-	lineChart2 := widgets.NewLineGraph()
-	nodeSelect1 = widgets.NewGraphNodeSelect()
-	nodeSelect2 = widgets.NewGraphNodeSelect()
+	lineChart1 = widgets.NewLineGraph(nodesList, 1)
+	lineChart2 = widgets.NewLineGraph(nodesList, 2)
 	eventDisplay = widgets.NewEventDisplay()
-	rebalancePopup := widgets.NewRebalancePopup()
+	popupManager := widgets.NewPopupManager()
 
 	// Starting the routine to check and accept incoming events
 	go eventCreateHandler(
@@ -126,19 +123,21 @@ func main() {
 	// Starting the routine to track and update event data
 	go eventDataHandler(eventDisplay, stats, config.alerts)
 
-	// Initializing the grid
+	// Grid is used to hold all the UI widgets together and maintain relative sizes
 	grid := gridInit(
 		nodesTable, statsTable, lineChart1, lineChart2,
-		eventDisplay, rebalancePopup,
+		eventDisplay, popupManager,
 	)
 
+	// Used to determine the table currently in use
 	tableSelect := leftTable
 
+	// Used to determine the graph corresponding to the nodesTable
 	var graphNum int
 
 	refreshUI(
 		statsTable, nodesTable, lineChart1, lineChart2,
-		eventDisplay, rebalancePopup, grid,
+		eventDisplay, popupManager, grid,
 	)
 
 	defer func() {
@@ -165,75 +164,69 @@ func main() {
 			case "<Up>", "k", "K":
 				table := getSelectedTable(tableSelect)
 				table.ScrollUp()
-				refreshUI(
-					statsTable, nodesTable, lineChart1, lineChart2,
-					eventDisplay, rebalancePopup, grid,
-				)
+				ui.Render(table)
+				popupManager.Render()
 
 			// Scroll Down
 			case "<Down>", "j", "J":
 				table := getSelectedTable(tableSelect)
 				table.ScrollDown()
-				refreshUI(
-					statsTable, nodesTable, lineChart1, lineChart2,
-					eventDisplay, rebalancePopup, grid,
-				)
+				ui.Render(table)
+				popupManager.Render()
 
 			// Move to the table to the right
 			case "<Right>", "l", "L":
 				if tableSelect != rightTable {
 					table := getSelectedTable(tableSelect)
 					table.ToggleTableSelect()
+					ui.Render(table)
 
 					tableSelect += 1
 					table = getSelectedTable(tableSelect)
 					table.ToggleTableSelect()
-
-					refreshUI(
-						statsTable, nodesTable, lineChart1, lineChart2,
-						eventDisplay, rebalancePopup, grid,
-					)
+					ui.Render(table)
+					popupManager.Render()
 				}
-
 			// Move to the table to the left
 			case "<Left>", "h", "H":
 				if tableSelect != leftTable {
 					table := getSelectedTable(tableSelect)
 					table.ToggleTableSelect()
+					ui.Render(table)
 
 					tableSelect -= 1
 					table = getSelectedTable(tableSelect)
 					table.ToggleTableSelect()
+					ui.Render(table)
 
-					refreshUI(
-						statsTable, nodesTable, lineChart1, lineChart2,
-						eventDisplay, rebalancePopup, grid,
-					)
+					popupManager.Render()
 				}
-
 			// Select stat for the left line chart
 			case "a", "A":
 				if tableSelect == leftTable &&
 					statsTable.SelectedRow != statsTable.Stat2 {
 
 					graphNum = leftGraph
+					lineChart1.SelectGraph()
+					lineChart2.UnSelectGraph()
+
 					statsTable.SelectGraph(graphNum)
 					nodesTable.SelectStat(
 						statsTable.Rows[statsTable.Stat1],
-						nodeSelect1.Nodes, nodeSelect1.Stat,
+						lineChart1.Nodes, lineChart1.Stat,
 					)
-					nodeSelect1.GraphSelectInit(
-						nodesTable.Rows, nodesTable.Nodes,
-						statsTable.Rows[statsTable.Stat1],
-					)
-					updateGraph(
-						statsTable, stats, nodesList,
-						lineChart1, graphNum,
-					)
-					refreshUI(
-						statsTable, nodesTable, lineChart1, lineChart2,
-						eventDisplay, rebalancePopup, grid,
-					)
+
+					if lineChart1.Stat != statsTable.Rows[statsTable.Stat1] {
+						updateGraph(
+							statsTable.Rows[statsTable.Stat1], stats, nodesList,
+							lineChart1, graphNum,
+						)
+					}
+					ui.Render(lineChart1)
+					ui.Render(lineChart2)
+					ui.Render(statsTable)
+					ui.Render(nodesTable)
+					popupManager.Render()
 				}
 
 			// Select stat for the right line chart
@@ -242,70 +235,159 @@ func main() {
 					statsTable.SelectedRow != statsTable.Stat1 {
 
 					graphNum = rightGraph
+					lineChart2.SelectGraph()
+					lineChart1.UnSelectGraph()
+
 					statsTable.SelectGraph(graphNum)
 					nodesTable.SelectStat(
 						statsTable.Rows[statsTable.Stat2],
-						nodeSelect2.Nodes, nodeSelect2.Stat,
+						lineChart2.Nodes, lineChart2.Stat,
 					)
-					nodeSelect2.GraphSelectInit(
-						nodesTable.Rows, nodesTable.Nodes,
-						statsTable.Rows[statsTable.Stat2],
-					)
-					updateGraph(
-						statsTable, stats, nodesList,
-						lineChart2, graphNum,
-					)
-					refreshUI(
-						statsTable, nodesTable, lineChart1, lineChart2,
-						eventDisplay, rebalancePopup, grid,
-					)
-				}
 
-			// Toggle selection of a node
-			case "s", "S":
-				if tableSelect == middleTable {
+					if lineChart2.Stat != statsTable.Rows[statsTable.Stat2] {
+						updateGraph(
+							statsTable.Rows[statsTable.Stat2], stats, nodesList,
+							lineChart2, graphNum,
+						)
+					}
+					ui.Render(lineChart1)
+					ui.Render(lineChart2)
+					ui.Render(statsTable)
+					ui.Render(nodesTable)
+					popupManager.Render()
+				}
+			// Interact with a table
+			case "<Enter>":
+				switch tableSelect {
+				case middleTable:
 					nodesTable.SelectNode()
-					nodeSelect, statNum := getSelectedGraphInfo(graphNum)
-					nodeSelect.GraphSelectInit(nodesTable.Rows, nodesTable.Nodes, statsTable.Rows[statNum])
-					updateUI(
-						nodesList, stats, lineChart1, lineChart2,
-						nodeSelect1, nodeSelect2,
-					)
-					refreshUI(
-						statsTable, nodesTable, lineChart1, lineChart2,
-						eventDisplay, rebalancePopup, grid,
-					)
-				}
-
-			// Print a report for an alert
-			case "p", "P":
-				if tableSelect == middleTable {
+					lineChart := getSelectedGraph(graphNum)
+					lineChart.SelectNode(nodesTable.Rows[nodesTable.SelectedRow])
+					updateUI(stats, lineChart)
+					ui.Render(nodesTable)
+					ui.Render(lineChart)
+					popupManager.Render()
+				case rightTable:
 					eventDisplay.ReportEvent(*config.reportPath)
 				}
+			// Toggle legend for the selected graph
+			case "p", "P":
+				lineChart := getSelectedGraph(graphNum)
+				lineChart.ToggleLegend()
+				ui.Render(lineChart)
+			// Scroll down on the hovered table
+			case "<MouseWheelDown>":
 
-			// Triggered on resize of the terminal window
+				payload := e.Payload.(ui.Mouse)
+				x := payload.X
+				y := payload.Y
+
+				var onTable bool
+
+				prevTableSelect := tableSelect
+
+				if tableSelect, onTable = hoveredTable(x, y, tableSelect); onTable {
+
+					if prevTableSelect == tableSelect {
+						table := getSelectedTable(tableSelect)
+						table.ScrollDown()
+						ui.Render(table)
+					} else {
+						table := getSelectedTable(prevTableSelect)
+						table.ToggleTableSelect()
+						ui.Render(table)
+
+						table = getSelectedTable(tableSelect)
+						table.ToggleTableSelect()
+						table.ScrollDown()
+						ui.Render(table)
+					}
+
+					popupManager.Render()
+				}
+			// Scroll up on the hovered table
+			case "<MouseWheelUp>":
+
+				payload := e.Payload.(ui.Mouse)
+				x := payload.X
+				y := payload.Y
+
+				var onTable bool
+
+				prevTableSelect := tableSelect
+
+				if tableSelect, onTable = hoveredTable(x, y, tableSelect); onTable {
+
+					if prevTableSelect == tableSelect {
+						table := getSelectedTable(tableSelect)
+						table.ScrollUp()
+						ui.Render(table)
+					} else {
+						table := getSelectedTable(prevTableSelect)
+						table.ToggleTableSelect()
+						ui.Render(table)
+
+						table = getSelectedTable(tableSelect)
+						table.ToggleTableSelect()
+						table.ScrollUp()
+						ui.Render(table)
+					}
+
+					popupManager.Render()
+				}
+			// Select the clicked line in any table
+			case "<MouseLeft>":
+
+				payload := e.Payload.(ui.Mouse)
+				x := payload.X
+				y := payload.Y
+
+				var onTable bool
+
+				prevTableSelect := tableSelect
+
+				if tableSelect, onTable = hoveredTable(x, y, tableSelect); onTable {
+
+					if prevTableSelect == tableSelect {
+						table := getSelectedTable(tableSelect)
+						table.HandleClick(x, y)
+						ui.Render(table)
+					} else {
+						table := getSelectedTable(prevTableSelect)
+						table.ToggleTableSelect()
+						ui.Render(table)
+
+						table = getSelectedTable(tableSelect)
+						table.ToggleTableSelect()
+						table.HandleClick(x, y)
+						ui.Render(table)
+					}
+
+					popupManager.Render()
+				}
+			// Event called when terminal window is resized
 			case "<Resize>":
 				payload := e.Payload.(ui.Resize)
 				grid.SetRect(0, 0, payload.Width, payload.Height)
-				rebalancePopup.Resize(payload.Width, payload.Height)
+				popupManager.SetSize(payload.Width, payload.Height)
 				refreshUI(
 					statsTable, nodesTable, lineChart1, lineChart2,
-					eventDisplay, rebalancePopup, grid,
+					eventDisplay, popupManager, grid,
 				)
+			case "t", "T": // To simulate a rebalance
+				manager.popupChannel <- "rebalance"
 			}
 
 		// Update line charts and re-render UI
 		case <-updateTicker:
-			updateUI(
-				nodesList, stats, lineChart1, lineChart2,
-				nodeSelect1, nodeSelect2,
-			)
+			updateUI(stats, lineChart1)
+			updateUI(stats, lineChart2)
 			refreshUI(
 				statsTable, nodesTable, lineChart1, lineChart2,
-				eventDisplay, rebalancePopup, grid,
+				eventDisplay, popupManager, grid,
 			)
 
-		// Recieve errors from the other routines
+		// Handle errors from the update_stats routine
 		case errorMsg := <-manager.errChannel:
 			if errorMsg.terminate {
 				log.Fatalf(errorMsg.description)
@@ -313,33 +395,44 @@ func main() {
 			} else {
 				log.Warnf(errorMsg.description)
 			}
+		// Handle warnings from the update_stats routine
+		case msg := <-manager.popupChannel:
 
-		// Recieve rebalance notifications from the polling routines
-		case <-manager.rebalanceChannel:
-			log.Warnf("Cluster undergoing rebalance")
-			rebalancePopup.SetRebalance()
+			if msg == "rebalance" {
+				popupManager.NewPopup(
+					"Cluster undergoing rebalance", "rebalance",
+					time.Now().Add(time.Millisecond*time.Duration(1500)),
+				)
+				log.Warnf("Cluster undergoing rebalance")
+			} else {
+				popupManager.NewPopup(
+					"Slow response from "+msg, "warning",
+					time.Now().Add(time.Millisecond*time.Duration(3000)),
+				)
+				log.Warnf("Slow response from " + msg)
+			}
+
 			refreshUI(
 				statsTable, nodesTable, lineChart1, lineChart2,
-				eventDisplay, rebalancePopup, grid,
+				eventDisplay, popupManager, grid,
 			)
-
-		// Recieve node addition or removal notification from manager
+		// Handle node changes from the manager routine
 		case info := <-manager.updateChannel:
 			if info.add {
 				nodesTable.AddNode(info.node)
-				nodeSelect1.AddNode(info.node)
-				nodeSelect2.AddNode(info.node)
+				lineChart1.AddNode(info.node)
+				lineChart2.AddNode(info.node)
+				popupManager.AddNodePopup(info.node)
 			} else {
 				nodesTable.RemoveNode(info.node)
-				nodeSelect1.RemoveNode(info.node)
-				nodeSelect2.RemoveNode(info.node)
+				lineChart1.RemoveNode(info.node)
+				lineChart2.RemoveNode(info.node)
+				popupManager.RemoveNodePopup(info.node)
 			}
 
 			nodesList = nodesTable.Rows
-			updateGraphNodes(
-				nodesList, stats, lineChart1, lineChart2,
-				nodeSelect1, nodeSelect2,
-			)
+			updateUI(stats, lineChart1)
+			updateUI(stats, lineChart2)
 		}
 	}
 }
@@ -347,7 +440,7 @@ func main() {
 // Re-render UI without updating line charts
 func refreshUI(statsTable *widgets.StatsTable, nodesTable *widgets.NodesTable,
 	lineChart1 *widgets.LineGraph, lineChart2 *widgets.LineGraph,
-	eventDisplay *widgets.EventDisplay, rebalancePopup *widgets.RebalancePopup,
+	eventDisplay *widgets.EventDisplay, popupManager *widgets.PopupManager,
 	grid *ui.Grid) {
 
 	ui.Render(grid)
@@ -357,13 +450,10 @@ func refreshUI(statsTable *widgets.StatsTable, nodesTable *widgets.NodesTable,
 	ui.Render(lineChart2)
 	ui.Render(eventDisplay)
 
-	rebalancePopup.DisplayLock.RLock()
-	if rebalancePopup.Display {
-		ui.Render(rebalancePopup)
-	}
-	rebalancePopup.DisplayLock.RUnlock()
+	popupManager.Render()
 }
 
+// Returns the table currently selected
 func getSelectedTable(tableSelect int) widgets.Table {
 	if tableSelect == leftTable {
 		return statsTable
@@ -374,10 +464,25 @@ func getSelectedTable(tableSelect int) widgets.Table {
 	}
 }
 
-func getSelectedGraphInfo(graphNum int) (*widgets.GraphNodeSelect, int) {
-	if graphNum == leftGraph {
-		return nodeSelect1, statsTable.Stat1
+// Returns the table the mouse is currently on
+func hoveredTable(x int, y int, tableSelect int) (int, bool) {
+
+	if statsTable.Contains(x, y) {
+		return leftTable, true
+	} else if nodesTable.Contains(x, y) {
+		return middleTable, true
+	} else if eventDisplay.Contains(x, y) {
+		return rightTable, true
 	} else {
-		return nodeSelect2, statsTable.Stat2
+		return tableSelect, false
+	}
+}
+
+// Returns the graph the nodes table is currently linked to
+func getSelectedGraph(graphNum int) *widgets.LineGraph {
+	if graphNum == leftGraph {
+		return lineChart1
+	} else {
+		return lineChart2
 	}
 }

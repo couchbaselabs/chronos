@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"time"
 
@@ -27,39 +28,42 @@ type message struct {
 
 // Parameters used by each polling routine
 type updateStatsParams struct {
-	username         string
-	password         string
-	stats            *stats
-	nodeName         string
-	errChannel       chan *errorMsg
-	eventChannel     chan *widgets.Event
-	rebalanceChannel chan bool
-	killSwitch       chan bool
+	username     string
+	password     string
+	stats        *stats
+	nodeName     string
+	errChannel   chan *errorMsg
+	eventChannel chan *widgets.Event
+	popupChannel chan string
+	killSwitch   chan bool
+	timeDiff     float64
 }
 
-// Error structure used by routines to send errors to the main routine
-// Incorporates a flag to identify if error is fatal
+// Errors encountered sent to the main routine
 type errorMsg struct {
 	name        error
 	description string
-	terminate   bool
+
+	// Flag to signal termination of the program
+	terminate bool
 }
 
 // Function to consolidate all the input parameters into a struct
 func newUpdateStatsParams(username string, password string,
 	stats *stats, node string, errChannel chan *errorMsg,
 	eventChannel chan *widgets.Event,
-	rebalanceChannel chan bool, killSwitch chan bool) *updateStatsParams {
+	popupChannel chan string, killSwitch chan bool) *updateStatsParams {
 
 	return &updateStatsParams{
-		username:         username,
-		password:         password,
-		stats:            stats,
-		nodeName:         node,
-		errChannel:       errChannel,
-		eventChannel:     eventChannel,
-		rebalanceChannel: rebalanceChannel,
-		killSwitch:       killSwitch,
+		username:     username,
+		password:     password,
+		stats:        stats,
+		nodeName:     node,
+		errChannel:   errChannel,
+		eventChannel: eventChannel,
+		popupChannel: popupChannel,
+		killSwitch:   killSwitch,
+		timeDiff:     0,
 	}
 }
 
@@ -142,28 +146,87 @@ func updateStats(params *updateStatsParams) int {
 
 			// Send a message to the main routine if node is under rebalance
 			if m.RebalanceInProgress {
-				params.rebalanceChannel <- true
+				params.popupChannel <- "rebalance"
 			}
 
-			// Update stat arrival time
+			// Note time before updating for accurate calculations across commands
+			curTime := time.Now()
+
+			// Update arrival time of the chunk
 			params.stats.timeLock.Lock()
 
+			sec := 1
+
+			// If this is not the first update for the node
+			if !params.stats.arrivalTimes[params.nodeName][len(params.stats.arrivalTimes[params.nodeName])-1].IsZero() {
+
+				// Time passed from the last time stats were updated
+				diffTime := curTime.Sub(
+					params.stats.arrivalTimes[params.nodeName][len(params.stats.arrivalTimes[params.nodeName])-1],
+				)
+				diffSec := diffTime.Seconds()
+
+				// Number of seconds to update
+				sec = int(math.Round(diffSec + params.timeDiff))
+
+				// Excess time ignored in rounding
+				params.timeDiff = diffSec + params.timeDiff - float64(sec)
+			}
+
+			// If response is delayed
+			if sec > 1 {
+				params.popupChannel <- params.nodeName
+			}
+
+			// Update unknown times
+			for i := 0; i < sec-1; i++ {
+				params.stats.arrivalTimes[params.nodeName] =
+					params.stats.arrivalTimes[params.nodeName][1:]
+
+				params.stats.arrivalTimes[params.nodeName] =
+					append(
+						params.stats.arrivalTimes[params.nodeName],
+						time.Time{},
+					)
+			}
+
+			// Update current time
 			params.stats.arrivalTimes[params.nodeName] =
 				params.stats.arrivalTimes[params.nodeName][1:]
 
 			params.stats.arrivalTimes[params.nodeName] =
-				append(params.stats.arrivalTimes[params.nodeName], time.Now())
+				append(params.stats.arrivalTimes[params.nodeName], curTime)
 
 			params.stats.timeLock.Unlock()
 
-			// Update stats data
+			params.stats.bufferLock.Lock()
+
+			// Update unknown stats
+			for i := 0; i < sec-1; i++ {
+				for _, stat := range params.stats.statsList {
+					params.stats.statBuffers[params.nodeName][stat] =
+						params.stats.statBuffers[params.nodeName][stat][1:]
+
+					params.stats.statBuffers[params.nodeName][stat] =
+						append(
+							params.stats.statBuffers[params.nodeName][stat],
+							params.stats.statBuffers[params.nodeName][stat][len(params.stats.statBuffers[params.nodeName][stat])-1],
+						)
+				}
+			}
+			params.stats.bufferLock.Unlock()
+
+			// Update current stat slices
 			for _, stat := range params.stats.statsList {
 				val, ok := m.Stats[stat]
 				params.stats.bufferLock.Lock()
 
+				// Remove first element
 				params.stats.statBuffers[params.nodeName][stat] =
 					params.stats.statBuffers[params.nodeName][stat][1:]
 
+				// If chunk has the stat, update the buffer with the value
+				// else update with 0 as default (should never occur)
 				if ok {
 					params.stats.statBuffers[params.nodeName][stat] =
 						append(
@@ -182,7 +245,7 @@ func updateStats(params *updateStatsParams) int {
 					params.stats, params.nodeName, stat, params.eventChannel,
 				)
 			}
-		// Exit out of the loop if node has been removed
+		// Kill the routine if node is no longer part of the cluster
 		case <-params.killSwitch:
 			params.errChannel <- newErrorMsg(
 				nil, "update_stats: Node not part of cluster anymore: "+
@@ -194,45 +257,34 @@ func updateStats(params *updateStatsParams) int {
 	}
 }
 
-// Exponential backoff loop for the polls
+// Exponential backoff loop for connection to the node
 func updateStatsExponentialBackoff(params *updateStatsParams) {
 
 	startSleepMS := 500
 	backoffFactor := 1.5
 	maxSleepMS := 5000
-	numRetries := 3
 	nextSleepMS := startSleepMS
-	curRetries := 0
 
 	for {
 		select {
-		// Exit out if node is not part of the cluster
+		// Exit out of backoff loop if node no longer in the cluster
 		case <-params.killSwitch:
 			params.errChannel <- newErrorMsg(
 				nil, "update_stats: Node not part of cluster anymore: "+
 					params.nodeName, false)
 			return
+		// Retry with exponential backoff
 		default:
-			if curRetries < numRetries {
-				val := updateStats(params)
+			val := updateStats(params)
 
-				time.Sleep(time.Duration(nextSleepMS) * time.Millisecond)
-				nextSleepMS = int(float64(nextSleepMS) * backoffFactor)
+			time.Sleep(time.Duration(nextSleepMS) * time.Millisecond)
+			nextSleepMS = int(float64(nextSleepMS) * backoffFactor)
 
-				if nextSleepMS > maxSleepMS {
-					nextSleepMS = maxSleepMS
-					curRetries++
-				}
+			if nextSleepMS > maxSleepMS {
+				nextSleepMS = maxSleepMS
+			}
 
-				if val == -1 {
-					return
-				}
-			} else {
-				// Kill chronos if node doesn't respond for a long time
-				params.errChannel <- newErrorMsg(
-					nil, "update_stats.go: Server not responding "+
-						params.nodeName, true,
-				)
+			if val == -1 {
 				return
 			}
 		}

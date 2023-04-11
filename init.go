@@ -53,6 +53,7 @@ type stats struct {
 	// Arrival time of messages from each node (map[node][300][time.Time])
 	arrivalTimes map[string][]time.Time
 
+	// A copy of stat alert information
 	statInfo map[string]*configStatInfo
 
 	// Lock for statBuffers
@@ -266,10 +267,10 @@ func statsInit(config *config, nodesList []string, statsList []string) *stats {
 	for _, node := range nodesList {
 
 		statBuffers[node] = make(map[string][]float64)
-		arrivalTimes[node] = make([]time.Time, 110)
+		arrivalTimes[node] = make([]time.Time, 300)
 
 		for _, stat := range statsList {
-			statBuffers[node][stat] = make([]float64, 110)
+			statBuffers[node][stat] = make([]float64, 300)
 		}
 	}
 
@@ -287,12 +288,7 @@ func statsInit(config *config, nodesList []string, statsList []string) *stats {
 func gridInit(nodesTable *widgets.NodesTable, statsTable *widgets.StatsTable,
 	lineChart1 *widgets.LineGraph, lineChart2 *widgets.LineGraph,
 	eventDisplay *widgets.EventDisplay,
-	rebalancePopup *widgets.RebalancePopup) *ui.Grid {
-
-	lineChart1.Title = ""
-	lineChart2.Title = ""
-	lineChart1.Data = make([][]float64, 0)
-	lineChart2.Data = make([][]float64, 0)
+	popupManager *widgets.PopupManager) *ui.Grid {
 
 	grid := ui.NewGrid()
 
@@ -310,6 +306,6 @@ func gridInit(nodesTable *widgets.NodesTable, statsTable *widgets.StatsTable,
 
 	termWidth, termHeight := ui.TerminalDimensions()
 	grid.SetRect(0, 0, termWidth, termHeight)
-	rebalancePopup.Resize(termWidth, termHeight)
+	popupManager.SetSize(termWidth, termHeight)
 	return grid
 }

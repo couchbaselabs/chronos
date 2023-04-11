@@ -9,6 +9,8 @@
 package widgets
 
 import (
+	"image"
+
 	ui "github.com/gizak/termui/v3"
 )
 
@@ -17,4 +19,11 @@ type Table interface {
 	ScrollUp()
 	ScrollDown()
 	ToggleTableSelect()
+	CalcPos()
+	HandleClick(x int, y int)
+	GetRect() image.Rectangle
+	SetRect(x1, y1, x2, y2 int)
+	Lock()
+	Unlock()
+	Contains(x int, y int) bool
 }

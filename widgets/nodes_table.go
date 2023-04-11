@@ -14,10 +14,7 @@ import (
 	ui "github.com/gizak/termui/v3"
 )
 
-// Defining colors for each line dased on its index
-var colors = ui.Theme.Plot.Lines
-
-// Widget to display Nodes
+// Widget to display nodes
 // Each row displayed on a separate line
 // Allows toggling of any row and a cursor to be present anywhere
 type NodesTable struct {
@@ -29,11 +26,14 @@ type NodesTable struct {
 	// Rows to be displayed
 	Rows []string
 
+	// Array to track the number of lines used to display each row
+	RowSize []int
+
 	// Cursor position
-	selectedRow int
+	SelectedRow int
 
 	// Row currently displayed on the first line
-	topRow int
+	TopRow int
 
 	// Toggle information for each node
 	Nodes []bool
@@ -56,16 +56,23 @@ func NewNodesTable(NodesList []string) *NodesTable {
 	return &NodesTable{
 		Block:       ui.NewBlock(),
 		header:      "List of Nodes",
-		selectedRow: 0,
-		topRow:      0,
+		SelectedRow: 0,
+		TopRow:      0,
 		selected:    false,
 		Rows:        rows,
+		RowSize:     make([]int, 0),
 		Nodes:       nodes,
 	}
 }
 
 // Render widget
 func (table *NodesTable) Draw(buf *ui.Buffer) {
+
+	if table.selected {
+		table.BorderStyle = ui.NewStyle(ui.ColorWhite)
+	} else {
+		table.BorderStyle = ui.NewStyle(8)
+	}
 	table.Block.Draw(buf)
 
 	// Horizontal padding of header from the left edge
@@ -75,7 +82,7 @@ func (table *NodesTable) Draw(buf *ui.Buffer) {
 	paddingRow := 4
 
 	// Display style of the header
-	styleHeader := ui.NewStyle(ui.ColorWhite, ui.ColorClear, ui.ModifierBold)
+	styleHeader := ui.NewStyle(table.BorderStyle.Fg, ui.ColorClear, ui.ModifierBold)
 
 	// Render header
 	buf.SetString(
@@ -83,90 +90,172 @@ func (table *NodesTable) Draw(buf *ui.Buffer) {
 		image.Pt(table.Inner.Min.X+paddingHeader, table.Inner.Min.Y+1),
 	)
 
+	table.RowSize = make([]int, len(table.Rows))
+
+	// Keep track of when space is not available to render the row
+	continueRender := true
+
 	// Loop to render as many rows as possible within the bounds of the widget
-	for rowNum := table.topRow; rowNum < table.topRow+table.Inner.Dy()-3 &&
-		rowNum < len(table.Rows); rowNum++ {
+	for rowNum, usedSpace := 0, 3; rowNum < len(table.Rows); rowNum++ {
 
 		row := table.Rows[rowNum]
-		y := rowNum + 3 - table.topRow
+
+		var rowCells []ui.Cell
 
 		// Check if current node is selected
 		if table.Nodes[rowNum] {
 			// Check if cursor on current node
-			if rowNum == table.selectedRow && table.selected {
-				buf.SetString(
+			if rowNum == table.SelectedRow && table.selected {
+				rowCells = ui.ParseStyles(
 					row,
 					ui.NewStyle(
-						colors[rowNum], ui.ColorWhite, ui.ModifierClear,
-					),
-					image.Pt(
-						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
+						getColor(row), ui.ColorWhite, ui.ModifierClear,
 					),
 				)
 			} else {
-				buf.SetString(
+				rowCells = ui.ParseStyles(
 					row,
 					ui.NewStyle(
-						ui.ColorWhite, colors[rowNum], ui.ModifierClear,
-					),
-					image.Pt(
-						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
+						getTextColor(getColor(row)), getColor(row), ui.ModifierClear,
 					),
 				)
 			}
 		} else {
 			// Check if cursor on the current node
-			if rowNum == table.selectedRow && table.selected {
-				buf.SetString(
+			if rowNum == table.SelectedRow && table.selected {
+				rowCells = ui.ParseStyles(
 					row,
 					ui.NewStyle(
-						colors[rowNum], ui.ColorBlack, ui.ModifierClear,
-					),
-					image.Pt(
-						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
+						ui.ColorBlack, ui.ColorWhite, ui.ModifierClear,
 					),
 				)
 			} else {
-				buf.SetString(
+				rowCells = ui.ParseStyles(
 					row,
 					ui.NewStyle(
-						colors[rowNum], ui.ColorClear, ui.ModifierClear,
-					),
-					image.Pt(
-						table.Inner.Min.X+paddingRow, table.Inner.Min.Y+y,
+						table.BorderStyle.Fg, ui.ColorClear, ui.ModifierClear,
 					),
 				)
+			}
+		}
+
+		// Add padding for the rows
+		rowCells = WrapCells(
+			rowCells, uint(table.Inner.Dx()-2*paddingRow),
+		)
+
+		// Split cells into multiple lines
+		rowCellRows := ui.SplitCells(rowCells, '\n')
+
+		// Render each cell if all the lines of text fit within the widget
+		if len(rowCellRows) < table.Inner.Dy()-usedSpace &&
+			rowNum >= table.TopRow && continueRender {
+			for i, row := range rowCellRows {
+				for _, cx := range ui.BuildCellWithXArray(row) {
+					x, cell := cx.X, cx.Cell
+					buf.SetCell(cell, image.Pt(
+						table.Inner.Min.X+paddingRow+x,
+						table.Inner.Min.Y+usedSpace+i,
+					))
+				}
+			}
+
+			// Update the size of the text
+			table.RowSize[rowNum] = len(rowCellRows)
+
+			// Track the current line number
+			usedSpace = usedSpace + table.RowSize[rowNum]
+		} else {
+			// Update number of rows taken to render even if not rendering
+			table.RowSize[rowNum] = len(rowCellRows)
+
+			if rowNum >= table.TopRow {
+				// Stop rendering from this row
+				continueRender = false
 			}
 		}
 	}
 }
 
-// Handler function to scroll up
+// Handler function for scroll up
 func (table *NodesTable) ScrollUp() {
 
-	table.selectedRow--
+	table.SelectedRow--
 
-	if table.selectedRow < 0 {
-		table.selectedRow = 0
-	}
+	table.CalcPos()
+}
 
-	if table.selectedRow < table.topRow {
-		table.topRow = table.selectedRow
+// Handler function for scroll down
+func (table *NodesTable) ScrollDown() {
+
+	table.SelectedRow++
+
+	table.CalcPos()
+}
+
+// Handler function for mouse click
+func (table *NodesTable) HandleClick(x int, y int) {
+	x = x - table.Min.X
+	y = y - table.Min.Y
+	if (x > 0 && x <= table.Inner.Dx()) && (y > 0 && y <= table.Inner.Dy()) {
+		table.SelectedRow = (table.TopRow + y) - 4
+		table.CalcPos()
 	}
 }
 
-// Handler function to scroll down
-func (table *NodesTable) ScrollDown() {
+// Handler function to ensure cursor is never out of bounds
+func (table *NodesTable) CalcPos() {
 
-	table.selectedRow++
-
-	if table.selectedRow > len(table.Rows)-1 {
-		table.selectedRow = len(table.Rows) - 1
+	if table.SelectedRow < 0 {
+		table.SelectedRow = 0
 	}
 
-	if table.selectedRow > table.topRow+table.Inner.Dy()-4 {
-		table.topRow = table.selectedRow - (table.Inner.Dy() - 4)
+	if table.SelectedRow < table.TopRow {
+		table.TopRow = table.SelectedRow
 	}
+
+	if table.SelectedRow > len(table.Rows)-1 {
+		table.SelectedRow = len(table.Rows) - 1
+	}
+	if table.SelectedRow > table.TopRow+(table.Inner.Dy()-4) {
+		table.TopRow = table.SelectedRow - (table.Inner.Dy() - 4)
+	}
+
+	if table.SelectedRow >= table.TopRow+table.RowsOnDisplay() {
+		space := table.Inner.Dy() - 4
+
+		for i := table.SelectedRow; i >= 0; i-- {
+			space = space - table.RowSize[i]
+			if space < 0 {
+				if i == table.SelectedRow {
+					table.TopRow = i
+				} else {
+					table.TopRow = i + 1
+				}
+				break
+			}
+		}
+	}
+}
+
+// Calculate number of alerts currently on display
+func (table *NodesTable) RowsOnDisplay() int {
+
+	space := table.Inner.Dy() - 4
+	rows := 0
+
+	for i := table.TopRow; i < len(table.RowSize); i++ {
+
+		space = space - table.RowSize[i]
+
+		if space > 0 {
+			rows = rows + 1
+		} else {
+			break
+		}
+	}
+
+	return rows
 }
 
 // Handler function to indicate if cursor is on widget
@@ -176,12 +265,19 @@ func (table *NodesTable) ToggleTableSelect() {
 
 // Handler function to initialize toggle info
 func (table *NodesTable) SelectStat(stat string,
-	nodes map[string]bool, nodeSelectStat string) {
+	nodes []*NodeData, graphStat string) {
 
-	for i, row := range table.Rows {
-		if stat == nodeSelectStat {
-			table.Nodes[i] = nodes[row]
-		} else {
+	if stat == graphStat {
+		for i, row := range table.Rows {
+			for _, node := range nodes {
+				if node.Node == row {
+					table.Nodes[i] = node.Active
+					break
+				}
+			}
+		}
+	} else {
+		for i := range table.Rows {
 			table.Nodes[i] = true
 		}
 	}
@@ -189,16 +285,16 @@ func (table *NodesTable) SelectStat(stat string,
 
 // Handler function to toggle select for a row
 func (table *NodesTable) SelectNode() {
-	table.Nodes[table.selectedRow] = !table.Nodes[table.selectedRow]
+	table.Nodes[table.SelectedRow] = !table.Nodes[table.SelectedRow]
 }
 
-// Handler function to add a new node
+// Handler function to add a new row
 func (table *NodesTable) AddNode(node string) {
 	table.Nodes = append(table.Nodes, true)
 	table.Rows = append(table.Rows, node)
 }
 
-// Handler function to remove an existing node
+// Handler function to remove a row
 func (table *NodesTable) RemoveNode(node string) {
 
 	tempRows := make([]string, 0)
@@ -213,4 +309,52 @@ func (table *NodesTable) RemoveNode(node string) {
 
 	table.Nodes = tempNodes
 	table.Rows = tempRows
+}
+
+// Handler function to determins if pixel is within the widget
+func (table *NodesTable) Contains(x int, y int) bool {
+	if x > table.Min.X && x <= table.Max.X &&
+		y > table.Min.Y && y <= table.Max.Y {
+		return true
+	} else {
+		return false
+	}
+}
+
+// Function to wrap long words without line breaks into multiple lines
+func WrapCells(cells []ui.Cell, width uint) []ui.Cell {
+	str := ui.CellsToString(cells)
+	newStr := ""
+	wrappedCells := make([]ui.Cell, 0)
+
+	for {
+		if len(str) > int(width) {
+			newStr = newStr + str[:width] + "\n"
+			str = str[width:]
+		} else {
+			newStr = newStr + str
+			break
+		}
+	}
+
+	i := 0
+	for _, _rune := range newStr {
+		if _rune == '\n' {
+			wrappedCells = append(
+				wrappedCells,
+				ui.Cell{
+					Rune:  _rune,
+					Style: ui.StyleClear,
+				})
+		} else {
+			wrappedCells = append(
+				wrappedCells,
+				ui.Cell{
+					Rune:  _rune,
+					Style: cells[i].Style,
+				})
+			i++
+		}
+	}
+	return wrappedCells
 }

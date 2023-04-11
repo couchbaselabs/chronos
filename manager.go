@@ -25,11 +25,12 @@ type manager struct {
 
 	statsList []string
 
-	// To track nodes currently being polled
-	polledNodes      map[string]bool
-	errChannel       chan *errorMsg
-	eventChannel     chan *widgets.Event
-	rebalanceChannel chan bool
+	// To track of nodes currently being polled
+	polledNodes map[string]bool
+
+	errChannel   chan *errorMsg
+	eventChannel chan *widgets.Event
+	popupChannel chan string
 
 	// Used to signal the addition or removal of any node to the main routine
 	updateChannel chan struct {
@@ -47,13 +48,13 @@ func newManager(nodesList []string, statsList []string, stats *stats,
 	username string, password string, cluster *gocb.Cluster) *manager {
 
 	manager := &manager{
-		stats:            stats,
-		nodes:            make(map[string]chan bool),
-		statsList:        statsList,
-		polledNodes:      make(map[string]bool),
-		errChannel:       make(chan *errorMsg),
-		eventChannel:     make(chan *widgets.Event),
-		rebalanceChannel: make(chan bool),
+		stats:        stats,
+		nodes:        make(map[string]chan bool),
+		statsList:    statsList,
+		polledNodes:  make(map[string]bool),
+		errChannel:   make(chan *errorMsg),
+		eventChannel: make(chan *widgets.Event),
+		popupChannel: make(chan string),
 		updateChannel: make(chan struct {
 			add  bool
 			node string
@@ -149,7 +150,7 @@ func startPolls(manager *manager) {
 		updateStatsParams := newUpdateStatsParams(
 			manager.username, manager.password, manager.stats, node,
 			manager.errChannel, manager.eventChannel,
-			manager.rebalanceChannel, killSwitch,
+			manager.popupChannel, killSwitch,
 		)
 
 		go updateStatsExponentialBackoff(updateStatsParams)
@@ -167,17 +168,17 @@ func createPoll(manager *manager, node string) {
 	manager.stats.bufferLock.Lock()
 	manager.stats.statBuffers[node] = make(map[string][]float64)
 	for _, stat := range manager.statsList {
-		manager.stats.statBuffers[node][stat] = make([]float64, 110)
+		manager.stats.statBuffers[node][stat] = make([]float64, 300)
 	}
 	manager.stats.bufferLock.Unlock()
 
 	manager.stats.timeLock.Lock()
-	manager.stats.arrivalTimes[node] = make([]time.Time, 110)
+	manager.stats.arrivalTimes[node] = make([]time.Time, 300)
 	manager.stats.timeLock.Unlock()
 
 	updateStatsParams := newUpdateStatsParams(
 		manager.username, manager.password, manager.stats, node,
-		manager.errChannel, manager.eventChannel, manager.rebalanceChannel,
+		manager.errChannel, manager.eventChannel, manager.popupChannel,
 		manager.nodes[node],
 	)
 
