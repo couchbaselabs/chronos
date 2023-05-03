@@ -30,10 +30,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat1": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(math.NaN()),
-					MaxChangeTime: intPointer(1),
+					MinVal:        math.NaN(),
+					MaxVal:        math.NaN(),
+					MaxChange:     math.NaN(),
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -48,10 +48,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat2": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(70.0),
-					MaxChange:     floatPointer(math.NaN()),
-					MaxChangeTime: intPointer(1),
+					MinVal:        math.NaN(),
+					MaxVal:        70.0,
+					MaxChange:     math.NaN(),
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -66,10 +66,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat3": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(65.0),
-					MaxChange:     floatPointer(math.NaN()),
-					MaxChangeTime: intPointer(1),
+					MinVal:        math.NaN(),
+					MaxVal:        65.0,
+					MaxChange:     math.NaN(),
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -84,10 +84,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat4": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(55.0),
-					MaxChange:     floatPointer(math.NaN()),
-					MaxChangeTime: intPointer(1),
+					MinVal:        math.NaN(),
+					MaxVal:        55.0,
+					MaxChange:     math.NaN(),
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -102,10 +102,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat5": {
-					MinVal:        floatPointer(10.0),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(math.NaN()),
-					MaxChangeTime: intPointer(1),
+					MinVal:        10.0,
+					MaxVal:        math.NaN(),
+					MaxChange:     math.NaN(),
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -120,10 +120,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat6": {
-					MinVal:        floatPointer(15.0),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(math.NaN()),
-					MaxChangeTime: intPointer(1),
+					MinVal:        15.0,
+					MaxVal:        math.NaN(),
+					MaxChange:     math.NaN(),
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -138,10 +138,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat7": {
-					MinVal:        floatPointer(25.0),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(math.NaN()),
-					MaxChangeTime: intPointer(1),
+					MinVal:        25.0,
+					MaxVal:        math.NaN(),
+					MaxChange:     math.NaN(),
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -156,10 +156,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat8": {
-					MinVal:        floatPointer(70.0),
-					MaxVal:        floatPointer(70.0),
-					MaxChange:     floatPointer(math.NaN()),
-					MaxChangeTime: intPointer(1),
+					MinVal:        70.0,
+					MaxVal:        70.0,
+					MaxChange:     math.NaN(),
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -174,10 +174,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat9": {
-					MinVal:        floatPointer(75.0),
-					MaxVal:        floatPointer(65.0),
-					MaxChange:     floatPointer(math.NaN()),
-					MaxChangeTime: intPointer(1),
+					MinVal:        75.0,
+					MaxVal:        65.0,
+					MaxChange:     math.NaN(),
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -192,10 +192,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat10": {
-					MinVal:        floatPointer(65.0),
-					MaxVal:        floatPointer(75.0),
-					MaxChange:     floatPointer(math.NaN()),
-					MaxChangeTime: intPointer(1),
+					MinVal:        65.0,
+					MaxVal:        75.0,
+					MaxChange:     math.NaN(),
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -210,10 +210,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat11": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(0.1),
-					MaxChangeTime: intPointer(0),
+					MinVal:        math.NaN(),
+					MaxVal:        math.NaN(),
+					MaxChange:     0.1,
+					MaxChangeTime: 0,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -228,10 +228,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat12": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(0.1),
-					MaxChangeTime: intPointer(1),
+					MinVal:        math.NaN(),
+					MaxVal:        math.NaN(),
+					MaxChange:     0.1,
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -246,10 +246,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat13": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(0.1),
-					MaxChangeTime: intPointer(2),
+					MinVal:        math.NaN(),
+					MaxVal:        math.NaN(),
+					MaxChange:     0.1,
+					MaxChangeTime: 2,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -264,10 +264,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat14": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(0.1),
-					MaxChangeTime: intPointer(6),
+					MinVal:        math.NaN(),
+					MaxVal:        math.NaN(),
+					MaxChange:     0.1,
+					MaxChangeTime: 6,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -282,10 +282,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat15": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(0.1),
-					MaxChangeTime: intPointer(7),
+					MinVal:        math.NaN(),
+					MaxVal:        math.NaN(),
+					MaxChange:     0.1,
+					MaxChangeTime: 7,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -300,10 +300,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat16": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(0.1),
-					MaxChangeTime: intPointer(8),
+					MinVal:        math.NaN(),
+					MaxVal:        math.NaN(),
+					MaxChange:     0.1,
+					MaxChangeTime: 8,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -318,10 +318,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat17": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(1.0),
-					MaxChangeTime: intPointer(1),
+					MinVal:        math.NaN(),
+					MaxVal:        math.NaN(),
+					MaxChange:     1.0,
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -336,10 +336,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat18": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(0.99),
-					MaxChangeTime: intPointer(1),
+					MinVal:        math.NaN(),
+					MaxVal:        math.NaN(),
+					MaxChange:     0.99,
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -354,10 +354,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat19": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(1.01),
-					MaxChangeTime: intPointer(1),
+					MinVal:        math.NaN(),
+					MaxVal:        math.NaN(),
+					MaxChange:     1.01,
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -372,10 +372,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat20": {
-					MinVal:        floatPointer(75.0),
-					MaxVal:        floatPointer(math.NaN()),
-					MaxChange:     floatPointer(0.1),
-					MaxChangeTime: intPointer(1),
+					MinVal:        75.0,
+					MaxVal:        math.NaN(),
+					MaxChange:     0.1,
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -390,10 +390,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat21": {
-					MinVal:        floatPointer(math.NaN()),
-					MaxVal:        floatPointer(65.0),
-					MaxChange:     floatPointer(0.1),
-					MaxChangeTime: intPointer(1),
+					MinVal:        math.NaN(),
+					MaxVal:        65.0,
+					MaxChange:     0.1,
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -408,10 +408,10 @@ func TestAnalyzer(t *testing.T) {
 			},
 			statInfo: map[string]*configStatInfo{
 				"stat22": {
-					MinVal:        floatPointer(75.0),
-					MaxVal:        floatPointer(65.0),
-					MaxChange:     floatPointer(0.1),
-					MaxChangeTime: intPointer(1),
+					MinVal:        75.0,
+					MaxVal:        65.0,
+					MaxChange:     0.1,
+					MaxChangeTime: 1,
 				},
 			},
 			bufferLock: sync.RWMutex{},
@@ -680,10 +680,6 @@ func TestAnalyzer(t *testing.T) {
 	}
 
 	triggerEvent = TriggerEventOri
-}
-
-func floatPointer(val float64) *float64 {
-	return &val
 }
 
 func intPointer(val int) *int {

@@ -27,6 +27,12 @@ const (
 func analyzeStat(stats *stats, node string, stat string,
 	eventChannel chan *widgets.Event) {
 
+	// Make a copy of the stat's threshold information to
+	// prevent using the lock multiple times
+	stats.statInfoLock.RLock()
+	statInfo := stats.statInfo[stat]
+	stats.statInfoLock.RUnlock()
+
 	stats.bufferLock.RLock()
 
 	length := len(stats.statBuffers[node][stat])
@@ -35,21 +41,21 @@ func analyzeStat(stats *stats, node string, stat string,
 
 	// Check if max change can be calculated
 	// eg, cannot calculate change with only one valid value
-	if *stats.statInfo[stat].MaxChangeTime <= length-1 &&
-		!math.IsNaN(*stats.statInfo[stat].MaxChange) {
+	if statInfo.MaxChangeTime <= length-1 &&
+		!math.IsNaN(statInfo.MaxChange) {
 
 		lastTimeVal =
-			stats.statBuffers[node][stat][length-1-*stats.statInfo[stat].MaxChangeTime]
+			stats.statBuffers[node][stat][length-1-statInfo.MaxChangeTime]
 	}
 
 	stats.bufferLock.RUnlock()
 
 	// Check for minimum threshold
-	if curVal < *stats.statInfo[stat].MinVal &&
-		!math.IsNaN(*stats.statInfo[stat].MinVal) {
+	if curVal < statInfo.MinVal &&
+		!math.IsNaN(statInfo.MinVal) {
 
 		event := widgets.NewEvent(
-			node, stat, "Below Threshold", curVal, *stats.statInfo[stat].MinVal,
+			node, stat, "Below Threshold", curVal, statInfo.MinVal,
 		)
 
 		event.Description = makeDescription(event)
@@ -59,11 +65,11 @@ func analyzeStat(stats *stats, node string, stat string,
 	}
 
 	// Check for maximum threshold
-	if curVal > *stats.statInfo[stat].MaxVal &&
-		!math.IsNaN(*stats.statInfo[stat].MaxVal) {
+	if curVal > statInfo.MaxVal &&
+		!math.IsNaN(statInfo.MaxVal) {
 
 		event := widgets.NewEvent(
-			node, stat, "Above Threshold", curVal, *stats.statInfo[stat].MaxVal,
+			node, stat, "Above Threshold", curVal, statInfo.MaxVal,
 		)
 		event.Description = makeDescription(event)
 
@@ -74,15 +80,15 @@ func analyzeStat(stats *stats, node string, stat string,
 	// Check for maximum change
 	if !math.IsNaN(lastTimeVal) {
 		if math.Abs(curVal-lastTimeVal)/lastTimeVal >
-			*stats.statInfo[stat].MaxChange &&
-			!math.IsNaN(*stats.statInfo[stat].MaxChange) {
+			statInfo.MaxChange &&
+			!math.IsNaN(statInfo.MaxChange) {
 
 			event := widgets.NewEvent(
 				node, stat, "Sudden Change", curVal,
-				*stats.statInfo[stat].MaxChange,
+				statInfo.MaxChange,
 			)
 			event.ThresholdChange = math.Abs(curVal-lastTimeVal) / lastTimeVal
-			event.ThresholdTime = *stats.statInfo[stat].MaxChangeTime
+			event.ThresholdTime = statInfo.MaxChangeTime
 			event.Description = makeDescription(event)
 
 			triggerEvent(event, eventChannel, stats)

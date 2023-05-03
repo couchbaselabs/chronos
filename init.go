@@ -9,12 +9,16 @@
 package main
 
 import (
-	"flag"
+	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
+
+	flag "github.com/couchbaselabs/chronos/cflag"
 
 	"github.com/couchbaselabs/chronos/widgets"
 
@@ -22,6 +26,10 @@ import (
 	"github.com/couchbase/gocb/v2"
 	ui "github.com/gizak/termui/v3"
 )
+
+var logNum = 1
+var maxLogSize = 5000000
+var logFile *os.File
 
 // Holds all the input from the user given as command line arguments
 type config struct {
@@ -35,10 +43,10 @@ type config struct {
 
 // Holds all alert related thresholds for a particular stat
 type configStatInfo struct {
-	MinVal        *float64
-	MaxVal        *float64
-	MaxChange     *float64
-	MaxChangeTime *int
+	MinVal        float64
+	MaxVal        float64
+	MaxChange     float64
+	MaxChangeTime int
 }
 
 // Holds all incoming stat data from the server
@@ -56,11 +64,20 @@ type stats struct {
 	// A copy of stat alert information
 	statInfo map[string]*configStatInfo
 
+	// Lock for statInfo
+	statInfoLock sync.RWMutex
+
 	// Lock for statBuffers
 	bufferLock sync.RWMutex
 
 	// Lock for arrivalTimes
 	timeLock sync.RWMutex
+
+	// Lock for the list of stats
+	statsListLock sync.RWMutex
+
+	// Flag for first updation
+	updated bool
 }
 
 // Define and parse flags
@@ -75,7 +92,8 @@ func flagsInit() *config {
 		"password", "123456", "Provide the password for the cluster",
 	)
 	config.ip = flag.String(
-		"connection_string", "127.0.0.1:12000",
+		"connection_string",
+		"couchbase://127.0.0.1:12000",
 		"Provide the ip address for one of the search nodes",
 	)
 	config.reportPath = flag.String(
@@ -83,54 +101,6 @@ func flagsInit() *config {
 	)
 	config.stats = make(map[string]*configStatInfo)
 	config.alerts = make(map[string]*int)
-
-	statsList := []string{
-		"batch_bytes_added",
-		"batch_bytes_removed",
-		"curr_batches_blocked_by_herder",
-		"num_batches_introduced",
-		"num_bytes_used_ram",
-		"num_gocbcore_dcp_agents",
-		"num_gocbcore_stats_agents",
-		"pct_cpu_gc",
-		"tot_batches_merged",
-		"tot_batches_new",
-		"tot_bleve_dest_closed",
-		"tot_bleve_dest_opened",
-		"tot_queryreject_on_memquota",
-		"tot_rollback_full",
-		"tot_rollback_partial",
-		"total_gc",
-		"total_queries_rejected_by_herder",
-		"utilization:billableUnitsRate",
-		"utilization:cpuPercent",
-		"utilization:diskBytes",
-		"utilization:memoryBytes",
-	}
-
-	for _, stat := range statsList {
-
-		configStatInfo := &configStatInfo{}
-
-		configStatInfo.MinVal = flag.Float64(
-			stat+"_min_val", math.NaN(),
-			"Provide the minimum threshold value for "+stat,
-		)
-		configStatInfo.MaxVal = flag.Float64(
-			stat+"_max_val", math.NaN(),
-			"Provide the maximum threshold value for "+stat,
-		)
-		configStatInfo.MaxChange = flag.Float64(
-			stat+"_max_change", math.NaN(),
-			"Provide the maximum change permitted for "+stat,
-		)
-		configStatInfo.MaxChangeTime = flag.Int(
-			stat+"_max_change_time", 1,
-			"Provide the amount of time for the max change "+stat,
-		)
-
-		config.stats[stat] = configStatInfo
-	}
 
 	config.alerts["ttl"] = flag.Int(
 		"alert_TTL", 120, "Provide number of seconds an alert should live",
@@ -175,14 +145,31 @@ func checkAlertParams(alerts map[string]*int) {
 // Initializing the logger
 func logsInit() error {
 
-	logFile, err := os.OpenFile(
-		"chronos.log",
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
-		0644,
-	)
+	for {
+		file, err := os.OpenFile(
+			fmt.Sprintf("chronos%d.log", logNum),
+			os.O_APPEND|os.O_CREATE|os.O_WRONLY,
+			0644,
+		)
 
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
+
+		fileStats, err := file.Stat()
+
+		if err != nil {
+			return err
+		}
+
+		size := fileStats.Size()
+
+		if size > int64(maxLogSize) {
+			logNum++
+		} else {
+			logFile = file
+			break
+		}
 	}
 
 	log.SetOutput(logFile)
@@ -196,6 +183,29 @@ func loggerFunc(level, format string, args ...interface{}) string {
 
 	ts := time.Now().Format("2006-01-02T15:04:05.000-07:00")
 	prefix := ts + " [" + level + "] "
+
+	if file, err := os.Stat(fmt.Sprintf("chronos%d.log", logNum)); err == nil && level != "FATA" {
+		size := file.Size()
+
+		if size > int64(maxLogSize) {
+			newLogFile, err := os.OpenFile(
+				fmt.Sprintf("chronos%d.log", logNum+1),
+				os.O_APPEND|os.O_CREATE|os.O_WRONLY,
+				0644,
+			)
+
+			if err != nil {
+				log.Fatalf("log: Max log limit reached. Unable to create new log file %v", err)
+			}
+
+			logFile.Close()
+			logNum++
+			logFile = newLogFile
+			log.SetOutput(logFile)
+		}
+	} else {
+		fmt.Println(err)
+	}
 	if format != "" {
 		return prefix + fmt.Sprintf(format, args...)
 	}
@@ -206,13 +216,12 @@ func loggerFunc(level, format string, args ...interface{}) string {
 func clusterInit(connectionString string, username string,
 	password string) (*gocb.Cluster, error) {
 
-	cluster, err := gocb.Connect(
-		"couchbase://"+connectionString, gocb.ClusterOptions{
-			Authenticator: gocb.PasswordAuthenticator{
-				Username: username,
-				Password: password,
-			},
-		})
+	cluster, err := gocb.Connect(connectionString, gocb.ClusterOptions{
+		Authenticator: gocb.PasswordAuthenticator{
+			Username: username,
+			Password: password,
+		},
+	})
 
 	if err != nil {
 		return cluster, err
@@ -227,6 +236,7 @@ func nodesListInit(cluster *gocb.Cluster) ([]string, error) {
 	pings, err := cluster.Ping(&gocb.PingOptions{
 		ServiceTypes: []gocb.ServiceType{gocb.ServiceTypeSearch},
 	})
+
 	if err != nil {
 		return nil, err
 	}
@@ -246,41 +256,95 @@ func nodesListInit(cluster *gocb.Cluster) ([]string, error) {
 	return nodesList, nil
 }
 
-// Getting the list of stats from the config
-func statsListInit(stats map[string]*configStatInfo) []string {
+// Adding additional threshold values derived from the server
+func addThresholds(node string, username string, password string, stats *stats) {
 
-	statsList := make([]string, 0)
+	url := node + "/api/manager"
 
-	for stat := range stats {
-		statsList = append(statsList, stat)
+	req, err := http.NewRequest("GET", url, nil)
+	req.SetBasicAuth(username, password)
+
+	if err != nil {
+		log.Warnf("init: /api/manager request creation failed %v", err)
+		return
 	}
 
-	return statsList
+	resp, err := http.DefaultClient.Do(req)
+
+	if err != nil {
+		log.Warnf("init: /api/manager request failed %v", err)
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Warnf("init: /api/manager response status not ok %v", err)
+		return
+	}
+
+	dec := json.NewDecoder(resp.Body)
+
+	var respMsg map[string]interface{}
+
+	err = dec.Decode(&respMsg)
+
+	if err != nil {
+		log.Warnf("init: /api/manager response parsing failed %v", err)
+		return
+	}
+
+	var num_bytes_used_ram_max_val float64
+	if val, exists := respMsg["mgr"]; exists {
+		if mgr, ok := val.(map[string]interface{}); ok {
+			if val, exists := mgr["options"]; exists {
+				if options, ok := val.(map[string]interface{}); ok {
+					if val, exists := options["ftsMemoryQuota"]; exists {
+						if val, ok := val.(string); ok {
+							if thresholdVal, err :=
+								strconv.ParseFloat(val, 64); err == nil {
+								num_bytes_used_ram_max_val =
+									thresholdVal
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Only use the threshold value if the user did not give one
+	if num_bytes_used_ram_max_val == 0 {
+		log.Warnf("init: getting max threshold from couchbase server for " +
+			"num_bytes_used_ram failed")
+	} else {
+		stats.statInfoLock.Lock()
+		if math.IsNaN(stats.statInfo["num_bytes_used_ram"].MaxVal) {
+			stats.statInfo["num_bytes_used_ram"].MaxVal = num_bytes_used_ram_max_val
+		}
+		stats.statInfoLock.Unlock()
+	}
 }
 
 // Initialize the stats struct with empty slices
-func statsInit(config *config, nodesList []string, statsList []string) *stats {
+func statsInit(config *config, nodesList []string) *stats {
 
 	statBuffers := make(map[string]map[string][]float64)
 	arrivalTimes := make(map[string][]time.Time)
 
 	for _, node := range nodesList {
-
 		statBuffers[node] = make(map[string][]float64)
 		arrivalTimes[node] = make([]time.Time, 300)
-
-		for _, stat := range statsList {
-			statBuffers[node][stat] = make([]float64, 300)
-		}
 	}
 
 	return &stats{
-		statBuffers:  statBuffers,
-		statsList:    statsList,
-		statInfo:     config.stats,
-		arrivalTimes: arrivalTimes,
-		bufferLock:   sync.RWMutex{},
-		timeLock:     sync.RWMutex{},
+		statBuffers:   statBuffers,
+		statsList:     make([]string, 0),
+		statInfo:      config.stats,
+		arrivalTimes:  arrivalTimes,
+		statInfoLock:  sync.RWMutex{},
+		bufferLock:    sync.RWMutex{},
+		timeLock:      sync.RWMutex{},
+		statsListLock: sync.RWMutex{},
+		updated:       false,
 	}
 }
 

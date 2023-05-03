@@ -1,3 +1,5 @@
+<div style="text-align: justify;">
+
 # Chronos
 
 ## FTS monitoring/diagnostic tool
@@ -72,3 +74,5 @@ The tool will store logs for any anamoly or event that happens while the program
 - go run . -username Administrator -password asdasd -connection_string couchbase://127.0.0.1:12000
 - go run . -username Test -password 123456 -connection_string couchbase://192.183.42.7:12000 -report ~/Desktop/ -alert_TTL 30 -alert_data_padding 10
 - go run . -username Administrator -password 123456 -connection_string couchbase://192.173.39.128:12000 -report ~/Documents/Reports/ -alert_TTL 150 -alert_data_padding 50 -tot_query_reject_on_memquota_max_val 100 -pct_cpu_gc_max_change 0.5 -total_gc_max_change 0.5 -total_gc_max_change_time 2 -num_bytes_used_ram_min_val 50000
+
+</div>

@@ -14,9 +14,11 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	log "github.com/couchbase/clog"
+	flag "github.com/couchbaselabs/chronos/cflag"
 	"github.com/couchbaselabs/chronos/widgets"
 )
 
@@ -28,15 +30,16 @@ type message struct {
 
 // Parameters used by each polling routine
 type updateStatsParams struct {
-	username     string
-	password     string
-	stats        *stats
-	nodeName     string
-	errChannel   chan *errorMsg
-	eventChannel chan *widgets.Event
-	popupChannel chan string
-	killSwitch   chan bool
-	timeDiff     float64
+	username      string
+	password      string
+	stats         *stats
+	nodeName      string
+	errChannel    chan *errorMsg
+	eventChannel  chan *widgets.Event
+	popupChannel  chan string
+	updateChannel chan updateMessage
+	killSwitch    chan bool
+	timeDiff      float64
 }
 
 // Errors encountered sent to the main routine
@@ -49,21 +52,22 @@ type errorMsg struct {
 }
 
 // Function to consolidate all the input parameters into a struct
-func newUpdateStatsParams(username string, password string,
-	stats *stats, node string, errChannel chan *errorMsg,
-	eventChannel chan *widgets.Event,
-	popupChannel chan string, killSwitch chan bool) *updateStatsParams {
+func newUpdateStatsParams(username string, password string, stats *stats,
+	node string, errChannel chan *errorMsg, eventChannel chan *widgets.Event,
+	popupChannel chan string, updateChannel chan updateMessage,
+	killSwitch chan bool) *updateStatsParams {
 
 	return &updateStatsParams{
-		username:     username,
-		password:     password,
-		stats:        stats,
-		nodeName:     node,
-		errChannel:   errChannel,
-		eventChannel: eventChannel,
-		popupChannel: popupChannel,
-		killSwitch:   killSwitch,
-		timeDiff:     0,
+		username:      username,
+		password:      password,
+		stats:         stats,
+		nodeName:      node,
+		errChannel:    errChannel,
+		eventChannel:  eventChannel,
+		popupChannel:  popupChannel,
+		updateChannel: updateChannel,
+		killSwitch:    killSwitch,
+		timeDiff:      0,
 	}
 }
 
@@ -119,6 +123,7 @@ func updateStats(params *updateStatsParams) int {
 
 	// Setting the timer for checking if server sent a chunk through the response
 	// Should be equal to the time defined in the server
+
 	updateTicker := time.NewTicker(time.Second).C
 
 	// Main polling loop
@@ -143,6 +148,31 @@ func updateStats(params *updateStatsParams) int {
 				)
 				return 0
 			}
+
+			params.stats.bufferLock.Lock()
+
+			// Check for the first iteration of any poll
+			if !params.stats.updated {
+				// Only one of the polls enters this branch once
+				params.stats.updated = true
+
+				// Initialize the stats list for the first time while
+				// updating the threshold information from the flags
+				val := initStatsList(params, m.Stats)
+
+				// Safely exit if there are left over flags
+				if val < 0 {
+					params.stats.bufferLock.Unlock()
+					return val
+				}
+
+				// Add additional thresholds from the server
+				addThresholds(params.nodeName, params.username, params.password, params.stats)
+			} else {
+				// Check for differences and update the list of stats every iteration
+				updateStatsList(params, m.Stats)
+			}
+			params.stats.bufferLock.Unlock()
 
 			// Send a message to the main routine if node is under rebalance
 			if m.RebalanceInProgress {
@@ -203,6 +233,7 @@ func updateStats(params *updateStatsParams) int {
 
 			// Update unknown stats
 			for i := 0; i < sec-1; i++ {
+				//params.stats.statsListLock.RLock()
 				for _, stat := range params.stats.statsList {
 					params.stats.statBuffers[params.nodeName][stat] =
 						params.stats.statBuffers[params.nodeName][stat][1:]
@@ -213,10 +244,12 @@ func updateStats(params *updateStatsParams) int {
 							params.stats.statBuffers[params.nodeName][stat][len(params.stats.statBuffers[params.nodeName][stat])-1],
 						)
 				}
+				//params.stats.statsListLock.RUnlock()
 			}
 			params.stats.bufferLock.Unlock()
 
 			// Update current stat slices
+			//params.stats.statsListLock.RLock()
 			for _, stat := range params.stats.statsList {
 				val, ok := m.Stats[stat]
 				params.stats.bufferLock.Lock()
@@ -245,6 +278,8 @@ func updateStats(params *updateStatsParams) int {
 					params.stats, params.nodeName, stat, params.eventChannel,
 				)
 			}
+			//params.stats.statsListLock.RUnlock()
+
 		// Kill the routine if node is no longer part of the cluster
 		case <-params.killSwitch:
 			params.errChannel <- newErrorMsg(
@@ -289,4 +324,170 @@ func updateStatsExponentialBackoff(params *updateStatsParams) {
 			}
 		}
 	}
+}
+
+// Runs Once at start time
+// Updates the list of stats and reads any threshold
+// values available from the flags
+func initStatsList(params *updateStatsParams,
+	incomingStats map[string]float64) int {
+
+	for stat := range incomingStats {
+
+		// Initialize buffers for the stats
+		for node := range params.stats.statBuffers {
+			params.stats.statBuffers[node][stat] = make([]float64, 300)
+		}
+
+		params.stats.statsListLock.Lock()
+		params.stats.statsList = append(params.stats.statsList, stat)
+		params.stats.statsListLock.Unlock()
+
+		statInfo := &configStatInfo{
+			MinVal:        math.NaN(),
+			MaxVal:        math.NaN(),
+			MaxChange:     math.NaN(),
+			MaxChangeTime: 1,
+		}
+
+		// Check flags for the respective flag
+		if len(flag.CommandLine.Additional) != 0 {
+			for threshold, value := range flag.CommandLine.Additional {
+				switch threshold {
+				case stat + "_max_val":
+					temp, err := strconv.ParseFloat(value, 64)
+					if err != nil {
+						params.errChannel <- newErrorMsg(
+							err, "update_stats: Invalid flag value: "+
+								threshold+err.Error(), true,
+						)
+						return -1
+					}
+					statInfo.MaxVal = temp
+					delete(flag.CommandLine.Additional, threshold)
+				case stat + "_min_val":
+					temp, err := strconv.ParseFloat(value, 64)
+					if err != nil {
+						params.errChannel <- newErrorMsg(
+							err, "update_stats: Invalid flag value: "+
+								threshold+err.Error(), true,
+						)
+						return -1
+					}
+					statInfo.MinVal = temp
+					delete(flag.CommandLine.Additional, threshold)
+				case stat + "_max_change":
+					temp, err := strconv.ParseFloat(value, 64)
+					if err != nil {
+						params.errChannel <- newErrorMsg(
+							err, "update_stats: Invalid flag value: "+
+								threshold+err.Error(), true,
+						)
+						return -1
+					}
+					statInfo.MaxChange = temp
+					delete(flag.CommandLine.Additional, threshold)
+				case stat + "_max_change_time":
+					temp, err := strconv.Atoi(value)
+					if err != nil {
+						params.errChannel <- newErrorMsg(
+							err, "update_stats: Invalid flag value: "+
+								threshold+err.Error(), true,
+						)
+						return -1
+					}
+					statInfo.MaxChangeTime = temp
+					delete(flag.CommandLine.Additional, threshold)
+				}
+			}
+		}
+
+		// Send UI information about the new stat
+		params.updateChannel <- updateMessage{
+			add:  true,
+			node: "",
+			stat: stat,
+		}
+
+		params.stats.statInfoLock.Lock()
+		params.stats.statInfo[stat] = statInfo
+		params.stats.statInfoLock.Unlock()
+	}
+
+	// Check for any extra flags and raise appropriate errors
+	if len(flag.CommandLine.Additional) != 0 {
+		for threshold, value := range flag.CommandLine.Additional {
+			log.Printf(
+				"init: Invalid flag %s, value %s",
+				threshold,
+				value,
+			)
+		}
+
+		params.errChannel <- newErrorMsg(
+			nil, "update_stats: Invalid flag ",
+			true,
+		)
+		return -1
+	}
+
+	return 0
+}
+
+// Compare the current polled statsList with the existing statsList
+// Add or remove stats accordingly
+func updateStatsList(params *updateStatsParams,
+	incomingStats map[string]float64) {
+
+	for stat := range incomingStats {
+		if _, ok := params.stats.statBuffers[params.nodeName][stat]; !ok {
+			for node := range params.stats.statBuffers {
+				params.stats.statBuffers[node][stat] = make([]float64, 300)
+			}
+
+			params.stats.statsListLock.Lock()
+			params.stats.statsList = append(params.stats.statsList, stat)
+			params.stats.statsListLock.Unlock()
+
+			params.stats.statInfoLock.Lock()
+			params.stats.statInfo[stat] = &configStatInfo{
+				MinVal:        math.NaN(),
+				MaxVal:        math.NaN(),
+				MaxChange:     math.NaN(),
+				MaxChangeTime: 1,
+			}
+			params.stats.statInfoLock.Unlock()
+
+			params.updateChannel <- updateMessage{
+				add:  true,
+				node: "",
+				stat: stat,
+			}
+		}
+	}
+
+	statsList := make([]string, 0)
+	curStatsList := getStatsList(params.stats)
+
+	for _, stat := range curStatsList {
+		if _, ok := incomingStats[stat]; !ok {
+
+			delete(params.stats.statBuffers[params.nodeName], stat)
+			params.stats.statInfoLock.Lock()
+			delete(params.stats.statInfo, stat)
+			params.stats.statInfoLock.Unlock()
+
+			params.updateChannel <- updateMessage{
+				add:  false,
+				node: "",
+				stat: stat,
+			}
+		} else {
+			statsList = append(statsList, stat)
+		}
+	}
+
+	params.stats.statsListLock.Lock()
+	params.stats.statsList = statsList
+	params.stats.statsListLock.Unlock()
 }

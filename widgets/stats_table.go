@@ -53,11 +53,7 @@ type StatsTable struct {
 }
 
 // Initializes a new stats table
-func NewStatsTable(statsList []string) *StatsTable {
-
-	rows := make([]string, 0)
-	sort.Strings(statsList)
-	rows = append(rows, statsList...)
+func NewStatsTable() *StatsTable {
 
 	return &StatsTable{
 		Block:       ui.NewBlock(),
@@ -67,7 +63,7 @@ func NewStatsTable(statsList []string) *StatsTable {
 		Stat1:       -1,
 		Stat2:       -1,
 		selected:    true,
-		Rows:        rows,
+		Rows:        make([]string, 0),
 		RowSize:     make([]int, 0),
 	}
 }
@@ -305,5 +301,26 @@ func (table *StatsTable) Contains(x int, y int) bool {
 		return true
 	} else {
 		return false
+	}
+}
+
+// Handler function to add a new stat in a sorted order
+func (table *StatsTable) AddStat(stat string) {
+
+	index := sort.SearchStrings(table.Rows, stat)
+	table.Rows = append(table.Rows, "")
+	copy(table.Rows[index+1:], table.Rows[index:])
+	table.Rows[index] = stat
+
+}
+
+// Handler function to remove a stat
+func (table *StatsTable) RemoveStat(stat string) {
+
+	for i, row := range table.Rows {
+		if row == stat {
+			table.Rows = append(table.Rows[:i], table.Rows[i+1:]...)
+			return
+		}
 	}
 }

@@ -74,17 +74,13 @@ func main() {
 		)
 	}
 
-	// Obtain a list of stats from the config
-	statsList := statsListInit(config.stats)
-
-	// Initialize the stats struct with default values
-	stats := statsInit(config, nodesList, statsList)
+	// Initialize the stats struct with empty values
+	stats := statsInit(config, nodesList)
 
 	// Create a manager instance with all the
 	// parameters necessary to spawn new polls
 	manager := newManager(
-		nodesList, statsList, stats, *config.username,
-		*config.password, cluster,
+		nodesList, stats, *config.username, *config.password, cluster,
 	)
 
 	// Start the manager routine
@@ -95,7 +91,6 @@ func main() {
 
 	// Initialize termui
 	err2 := ui.Init()
-	defer ui.Close()
 	if err2 != nil {
 		log.Fatalf("main: Unable to initialize ui: %v", err2)
 		return
@@ -108,7 +103,7 @@ func main() {
 	uiEvents := ui.PollEvents()
 
 	// Initializing all widgets
-	statsTable = widgets.NewStatsTable(statsList)
+	statsTable = widgets.NewStatsTable()
 	nodesTable = widgets.NewNodesTable(nodesList)
 	lineChart1 = widgets.NewLineGraph(nodesList, 1)
 	lineChart2 = widgets.NewLineGraph(nodesList, 2)
@@ -141,9 +136,9 @@ func main() {
 	)
 
 	defer func() {
+		ui.Close()
 		if r := recover(); r != nil {
-			// Add log line here
-			fmt.Printf("main panicked!, r:%v\n", r)
+			log.Printf("main panicked!, r:%v\n", r)
 			os.Exit(2)
 		}
 	}()
@@ -418,21 +413,31 @@ func main() {
 			)
 		// Handle node changes from the manager routine
 		case info := <-manager.updateChannel:
-			if info.add {
-				nodesTable.AddNode(info.node)
-				lineChart1.AddNode(info.node)
-				lineChart2.AddNode(info.node)
-				popupManager.AddNodePopup(info.node)
-			} else {
-				nodesTable.RemoveNode(info.node)
-				lineChart1.RemoveNode(info.node)
-				lineChart2.RemoveNode(info.node)
-				popupManager.RemoveNodePopup(info.node)
-			}
+			if info.node != "" {
+				if info.add {
+					nodesTable.AddNode(info.node)
+					lineChart1.AddNode(info.node)
+					lineChart2.AddNode(info.node)
+					popupManager.AddNodePopup(info.node)
+				} else {
+					nodesTable.RemoveNode(info.node)
+					lineChart1.RemoveNode(info.node)
+					lineChart2.RemoveNode(info.node)
+					popupManager.RemoveNodePopup(info.node)
+				}
 
-			nodesList = nodesTable.Rows
-			updateUI(stats, lineChart1)
-			updateUI(stats, lineChart2)
+				nodesList = nodesTable.Rows
+				updateUI(stats, lineChart1)
+				updateUI(stats, lineChart2)
+			} else {
+				if info.add {
+					statsTable.AddStat(info.stat)
+				} else {
+					statsTable.RemoveStat(info.stat)
+				}
+
+				ui.Render(statsTable)
+			}
 		}
 	}
 }

@@ -23,8 +23,6 @@ type manager struct {
 	// Holds the kill switch channels to all the polling routines
 	nodes map[string]chan bool
 
-	statsList []string
-
 	// To track of nodes currently being polled
 	polledNodes map[string]bool
 
@@ -32,36 +30,36 @@ type manager struct {
 	eventChannel chan *widgets.Event
 	popupChannel chan string
 
-	// Used to signal the addition or removal of any node to the main routine
-	updateChannel chan struct {
-		add  bool
-		node string
-	}
+	// Used to signal the addition or removal of any node or stat to the main routine
+	updateChannel chan updateMessage
 
 	username string
 	password string
 	cluster  *gocb.Cluster
 }
 
+// Struct to indicate the addition or removal of any node or stat
+type updateMessage struct {
+	add  bool
+	node string
+	stat string
+}
+
 // Create and initialize a new manager
-func newManager(nodesList []string, statsList []string, stats *stats,
+func newManager(nodesList []string, stats *stats,
 	username string, password string, cluster *gocb.Cluster) *manager {
 
 	manager := &manager{
-		stats:        stats,
-		nodes:        make(map[string]chan bool),
-		statsList:    statsList,
-		polledNodes:  make(map[string]bool),
-		errChannel:   make(chan *errorMsg),
-		eventChannel: make(chan *widgets.Event),
-		popupChannel: make(chan string),
-		updateChannel: make(chan struct {
-			add  bool
-			node string
-		}),
-		username: username,
-		password: password,
-		cluster:  cluster,
+		stats:         stats,
+		nodes:         make(map[string]chan bool),
+		polledNodes:   make(map[string]bool),
+		errChannel:    make(chan *errorMsg),
+		eventChannel:  make(chan *widgets.Event),
+		popupChannel:  make(chan string),
+		updateChannel: make(chan updateMessage),
+		username:      username,
+		password:      password,
+		cluster:       cluster,
 	}
 
 	for _, node := range nodesList {
@@ -117,12 +115,10 @@ func monitorCluster(manager *manager) {
 				manager.polledNodes[node] = true
 			} else {
 				createPoll(manager, node)
-				manager.updateChannel <- struct {
-					add  bool
-					node string
-				}{
+				manager.updateChannel <- updateMessage{
 					add:  true,
 					node: node,
+					stat: "",
 				}
 			}
 		}
@@ -131,12 +127,10 @@ func monitorCluster(manager *manager) {
 		for node, status := range manager.polledNodes {
 			if !status {
 				deletePoll(manager, node)
-				manager.updateChannel <- struct {
-					add  bool
-					node string
-				}{
+				manager.updateChannel <- updateMessage{
 					add:  false,
 					node: node,
+					stat: "",
 				}
 			}
 		}
@@ -150,7 +144,7 @@ func startPolls(manager *manager) {
 		updateStatsParams := newUpdateStatsParams(
 			manager.username, manager.password, manager.stats, node,
 			manager.errChannel, manager.eventChannel,
-			manager.popupChannel, killSwitch,
+			manager.popupChannel, manager.updateChannel, killSwitch,
 		)
 
 		go updateStatsExponentialBackoff(updateStatsParams)
@@ -165,9 +159,10 @@ func createPoll(manager *manager, node string) {
 	manager.polledNodes[node] = true
 	manager.nodes[node] = make(chan bool)
 
+	statsList := getStatsList(manager.stats)
 	manager.stats.bufferLock.Lock()
 	manager.stats.statBuffers[node] = make(map[string][]float64)
-	for _, stat := range manager.statsList {
+	for _, stat := range statsList {
 		manager.stats.statBuffers[node][stat] = make([]float64, 300)
 	}
 	manager.stats.bufferLock.Unlock()
@@ -178,8 +173,8 @@ func createPoll(manager *manager, node string) {
 
 	updateStatsParams := newUpdateStatsParams(
 		manager.username, manager.password, manager.stats, node,
-		manager.errChannel, manager.eventChannel, manager.popupChannel,
-		manager.nodes[node],
+		manager.errChannel, manager.eventChannel,
+		manager.popupChannel, manager.updateChannel, manager.nodes[node],
 	)
 
 	go updateStatsExponentialBackoff(updateStatsParams)
@@ -204,4 +199,15 @@ func deletePoll(manager *manager, node string) {
 	manager.stats.timeLock.Lock()
 	delete(manager.stats.arrivalTimes, node)
 	manager.stats.timeLock.Unlock()
+}
+
+// Copies the stats list to reduce amount of time each routine holds the lock
+func getStatsList(stats *stats) []string {
+
+	stats.statsListLock.RLock()
+	statsList := make([]string, len(stats.statsList))
+	copy(statsList, stats.statsList)
+	stats.statsListLock.RUnlock()
+
+	return statsList
 }

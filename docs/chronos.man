@@ -1,0 +1,61 @@
+.TH CHRONOS 1 2023-05-25 GNU
+
+.SH NAME
+chronos
+
+.SH SYNOPSIS
+.B chronos
+\fB\-username\fR \fIusername
+\fB\-password\fR \fIpassword
+\fB\-connection_string\fR \fIconnection string
+[\fB\-report\fR \fIreport path]
+[\fB\-alert_TTL\fR \fIalert time to live]
+[\fB\-alert_data_padding\fR \fIalert data padding]
+[\fB\-\<stat\>_min_val\fR \fIminimum threshold value]
+[\fB\-\<stat\>_max_val\fR \fImaximum threshold value]
+[\fB\-\<stat\>_max_change\fR \fImaximum change percent]
+[\fB\-\<stat\>_max_change_time\fR \fImaximum change time]
+
+.SH DESCRIPTION
+.B chronos
+displays live stats polled from all the nodes in the cluster.
+
+.SH OPTIONS
+.TP
+.BR \-username
+username for the cluster.
+.TP
+.BR \-password
+password for the cluster.
+.TP
+.BR \-connection_string
+connection string for the cluster.
+.TP
+.BR \-report
+path to write alert reports.
+.TP
+.BR \-alert_TTL
+time to live for each alert.
+.TP
+.BR \-alert_data_padding
+additional time for which data is stored before and after an alert is triggered.
+.TP
+.BR \-\<stat\>_min_val
+minimum threshold for the \fB\<stat\>\fR below which an alert is triggered
+.TP
+.BR \-\<stat\>_max_val
+maximum threshold for the \fB\<stat\>\fR above which an alert is triggered
+.TP
+.BR \-\<stat\>_max_change
+maximum percent change for the \fB\<stat\>\fR above which an alert is triggered
+.TP
+.BR \-\<stat\>_max_change_time
+amount of time to be considered for the maximum percent change for the \fB\<stat\>\fR
+
+.SH SEE ALSO
+.TP
+.BR
+https://github.com/couchbaselabs/chronos/blob/main/docs/README.md
+.TP
+.BR
+https://github.com/couchbaselabs/chronos/blob/main/docs/FAQ.md
